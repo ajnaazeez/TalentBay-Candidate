@@ -4,25 +4,12 @@
 *.log
 *.pyc
 *.swp
-.DS_Store
-.atom/
-.build/
 .buildlog/
 .history
-.svn/
-.swiftpm/
-migrate_working_dir/
 
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
-.idea/
 
-# VS Code related
-# .vscode/
 
-# Flutter repo-specific / Dev helper ignores
+# Flutter repo-specific
 /bin/cache/
 /bin/internal/bootstrap.bat
 /bin/internal/bootstrap.sh
@@ -40,6 +27,8 @@ migrate_working_dir/
 /packages/flutter/coverage/
 version
 analysis_benchmark.json
+
+# packages file containing multi-root paths
 .packages.generated
 
 # Flutter/Dart/Pub related
@@ -51,11 +40,7 @@ analysis_benchmark.json
 .packages
 .pub-preload-cache/
 .pub/
-.pub-cache/
 build/
-/build/
-/coverage/
-coverage/
 flutter_*.png
 linked_*.ds
 unlinked.ds
@@ -71,10 +56,6 @@ unlinked_spec.ds
 **/android/**/GeneratedPluginRegistrant.java
 **/android/key.properties
 *.jks
-/android/app/debug
-/android/app/profile
-/android/app/release
-android/build/
 
 # iOS/XCode related
 **/ios/**/*.mode1v3
@@ -123,17 +104,11 @@ android/build/
 **/linux/flutter/generated_plugin_registrant.h
 **/linux/flutter/generated_plugins.cmake
 
-# Firebase config
-android/app/google-services.json
-ios/Runner/GoogleService-Info.plist
+# Coverage
+coverage/
 
-# Symbolication and Obfuscation
+# Symbols
 app.*.symbols
-app.*.map.json
-
-# Logs
-analyze_log.txt
-build_log.txt
 
 # Exceptions to above rules.
 !**/ios/**/default.mode1v3
