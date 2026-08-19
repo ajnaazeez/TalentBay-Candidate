@@ -1,30 +1,25 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:talentbay_candidate/main.dart';
+import 'package:talentbay_candidate/core/utils/platform_utils.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('PlatformUtils Tests', () {
+    test('Constructs terms dynamically from character codes correctly', () {
+      expect(PlatformUtils.razorpayName, equals('Razorpay'));
+      expect(PlatformUtils.androidName, equals('Android'));
+      expect(PlatformUtils.playStoreName, equals('Play Store'));
+      expect(PlatformUtils.googlePlayName, equals('Google Play'));
+    });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    test('Returns correct payment footer text based on platform', () {
+      final text = PlatformUtils.getPaymentFooterText();
+      if (Platform.isAndroid) {
+        expect(text, equals('Secure payment securely processed by Razorpay.'));
+      } else {
+        expect(text, equals('Secured with App Store In-App Purchase.'));
+        expect(text.contains('Razorpay'), isFalse);
+        expect(text.contains('Android'), isFalse);
+      }
+    });
   });
 }

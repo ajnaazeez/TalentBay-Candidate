@@ -191,11 +191,7 @@ class _InvitationCardState extends ConsumerState<_InvitationCard> {
                               .read(candidateControllerProvider)
                               .value;
                           if (candidate != null && !candidate.isPremium) {
-                            showDialog(
-                              context: context,
-                              builder: (context) =>
-                                  const SubscriptionPromptDialog(),
-                            );
+                            SubscriptionPromptDialog.show(context);
                             return;
                           }
 

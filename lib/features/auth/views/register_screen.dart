@@ -112,10 +112,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     return Scaffold(
       backgroundColor: backgroundColor,
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 500),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
               // Splash Header
               SizedBox(
                 height: MediaQuery.of(context).size.height * 0.30,
@@ -414,6 +418,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             ],
           ),
         ),
+      ),
+      ),
       ),
     );
   }

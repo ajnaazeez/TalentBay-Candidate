@@ -142,10 +142,15 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
 
     return Scaffold(
       backgroundColor: backgroundColor,
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      body: SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 500),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
             // Splash Image Header with Back Button
             Stack(
               children: [
@@ -318,6 +323,9 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
             ),
           ],
         ),
+      ),
+      ),
+      ),
       ),
     );
   }

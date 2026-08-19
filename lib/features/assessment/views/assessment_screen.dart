@@ -40,11 +40,7 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final candidate = ref.read(candidateControllerProvider).value;
       if (candidate != null && !candidate.isPremium) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const SubscriptionPromptDialog(),
-        ).then(
+        SubscriptionPromptDialog.show(context, barrierDismissible: false).then(
           (_) => Navigator.of(context).pop(),
         ); // Pop assessment screen after dialog
       } else {

@@ -521,10 +521,7 @@ class _ExploreTabState extends ConsumerState<ExploreTab> {
   ) {
     final candidate = ref.read(candidateControllerProvider).value;
     if (candidate != null && !candidate.isPremium) {
-      showDialog(
-        context: context,
-        builder: (context) => const SubscriptionPromptDialog(),
-      );
+      SubscriptionPromptDialog.show(context);
       return;
     }
 
@@ -546,6 +543,9 @@ class _ExploreTabState extends ConsumerState<ExploreTab> {
       context: context,
       backgroundColor: isDark ? Colors.grey[900] : Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.shortestSide >= 600 ? 550 : double.infinity,
+      ),
       builder: (context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
         child: Column(

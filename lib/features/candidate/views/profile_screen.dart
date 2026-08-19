@@ -213,6 +213,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
       context: context,
       backgroundColor: isDark ? Colors.grey[900] : Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.shortestSide >= 600 ? 550 : double.infinity,
+      ),
       builder: (context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         child: Column(
@@ -614,10 +617,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         else
           TextButton.icon(
             onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => const SubscriptionPromptDialog(),
-              );
+              SubscriptionPromptDialog.show(context);
             },
             icon: const Icon(Icons.workspace_premium, size: 16),
             label: const Text('Upgrade to Premium'),

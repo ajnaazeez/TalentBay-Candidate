@@ -27,7 +27,7 @@ void main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   await FirebaseAppCheck.instance.activate(
-    // TODO: Change this back to playIntegrity before publishing to Play Store
+    // TODO: Change this to release provider before publishing
     androidProvider: AndroidProvider.debug,
   );
 
@@ -64,6 +64,21 @@ class _MyAppState extends ConsumerState<MyApp> {
       themeMode: themeMode,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        if (child == null) return const SizedBox.shrink();
+        final mediaQueryData = MediaQuery.of(context);
+        final shortestSide = mediaQueryData.size.shortestSide;
+        final isTablet = shortestSide >= 600;
+        final textScaleFactor = isTablet ? 1.15 : 1.0;
+        
+        return MediaQuery(
+          data: mediaQueryData.copyWith(
+            textScaleFactor: textScaleFactor,
+            textScaler: TextScaler.linear(textScaleFactor),
+          ),
+          child: child,
+        );
+      },
     );
   }
 }

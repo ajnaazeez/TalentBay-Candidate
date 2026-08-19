@@ -32,11 +32,16 @@ class TermsAndConditionsScreen extends StatelessWidget {
         ),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      body: SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 600),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
             Container(
               padding: const EdgeInsets.all(16),
               margin: const EdgeInsets.only(bottom: 24),
@@ -140,6 +145,9 @@ class TermsAndConditionsScreen extends StatelessWidget {
             const SizedBox(height: 24),
           ],
         ),
+      ),
+      ),
+      ),
       ),
     );
   }

@@ -98,6 +98,9 @@ class _HomeTabState extends ConsumerState<HomeTab>
             context: context,
             isScrollControlled: true,
             backgroundColor: Colors.transparent,
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.shortestSide >= 600 ? 550 : double.infinity,
+            ),
             builder: (context) => const SubscriptionTrialBottomSheet(),
           );
         }

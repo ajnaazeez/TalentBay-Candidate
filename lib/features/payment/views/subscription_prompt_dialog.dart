@@ -2,12 +2,22 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:talentbay_candidate/core/constants/payment_constants.dart';
+import 'package:talentbay_candidate/core/utils/platform_utils.dart';
 import 'package:talentbay_candidate/features/candidate/controllers/candidate_controller.dart';
 import 'package:talentbay_candidate/features/payment/controllers/subscription_controller.dart';
 import '../../../core/theme/app_colors.dart';
 
 class SubscriptionPromptDialog extends ConsumerWidget {
   const SubscriptionPromptDialog({super.key});
+
+  static Future<T?> show<T>(BuildContext context, {bool barrierDismissible = true}) {
+    return showDialog<T>(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.95), // Highly opaque to prevent background text visibility
+      barrierDismissible: barrierDismissible,
+      builder: (context) => const SubscriptionPromptDialog(),
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -64,7 +74,12 @@ class SubscriptionPromptDialog extends ConsumerWidget {
     return Dialog(
       backgroundColor: theme.scaffoldBackgroundColor,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: MediaQuery.of(context).size.shortestSide >= 600
+            ? (MediaQuery.of(context).size.width - 480) / 2
+            : 16,
+        vertical: 24,
+      ),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -154,9 +169,7 @@ class SubscriptionPromptDialog extends ConsumerWidget {
 
                   // Footer
                   Text(
-                    Platform.isAndroid
-                        ? 'Secure payment securely processed by Razorpay.'
-                        : 'Secured with App Store In-App Purchase.',
+                    PlatformUtils.getPaymentFooterText(),
                     style: TextStyle(
                       fontSize: 10,
                       color: theme.colorScheme.onSurface.withOpacity(0.4),

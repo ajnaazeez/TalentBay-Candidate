@@ -80,7 +80,9 @@ class _EditSummaryDialogState extends State<EditSummaryDialog> {
       backgroundColor: isDark ? Colors.grey[900] : Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
       child: Container(
-        width: MediaQuery.of(context).size.width * 0.9,
+        width: MediaQuery.of(context).size.shortestSide >= 600
+            ? 500
+            : MediaQuery.of(context).size.width * 0.9,
         padding: const EdgeInsets.all(20.0),
         child: Column(
           mainAxisSize: MainAxisSize.min,

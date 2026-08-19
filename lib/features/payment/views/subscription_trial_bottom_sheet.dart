@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:talentbay_candidate/core/constants/payment_constants.dart';
+import 'package:talentbay_candidate/core/utils/platform_utils.dart';
 import 'package:talentbay_candidate/features/candidate/controllers/candidate_controller.dart';
 import 'package:talentbay_candidate/features/payment/controllers/subscription_controller.dart';
 import '../../../core/theme/app_colors.dart';
@@ -147,9 +148,7 @@ class SubscriptionTrialBottomSheet extends ConsumerWidget {
 
                   // Footer
                   Text(
-                    Platform.isAndroid
-                        ? 'Secure payment securely processed by Razorpay.'
-                        : 'Secured with App Store In-App Purchase.',
+                    PlatformUtils.getPaymentFooterText(),
                     style: TextStyle(
                       fontSize: 10,
                       color: theme.colorScheme.onSurface.withOpacity(0.4),

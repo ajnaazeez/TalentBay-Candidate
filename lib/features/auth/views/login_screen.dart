@@ -140,10 +140,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return Scaffold(
       backgroundColor: backgroundColor,
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 500),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
               // Splash Image Header
               SizedBox(
                 height: MediaQuery.of(context).size.height * 0.35,
@@ -401,6 +405,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ],
           ),
         ),
+      ),
+      ),
       ),
     );
   }

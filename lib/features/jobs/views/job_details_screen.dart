@@ -28,10 +28,7 @@ class _JobDetailsScreenState extends ConsumerState<JobDetailsScreen> {
   void _applyToJob(JobModel job, String candidateId) async {
     final candidate = ref.read(candidateControllerProvider).value;
     if (candidate != null && !candidate.isPremium) {
-      showDialog(
-        context: context,
-        builder: (context) => const SubscriptionPromptDialog(),
-      );
+      SubscriptionPromptDialog.show(context);
       return;
     }
 

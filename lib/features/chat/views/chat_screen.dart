@@ -132,6 +132,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.shortestSide >= 600 ? 550 : double.infinity,
+      ),
       builder: (context) {
         return SafeArea(
           child: Column(
