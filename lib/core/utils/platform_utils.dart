@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class PlatformUtils {
   /// Dynamically constructs the word 'Razorpay' using character codes
@@ -20,6 +22,27 @@ class PlatformUtils {
       return 'Secure payment securely processed by $razorpayName.';
     } else {
       return 'Secured with App Store In-App Purchase.';
+    }
+  }
+
+  /// Launches a URL using the url_launcher package.
+  /// Shows a snackbar if the launch fails.
+  static Future<void> launchURL(BuildContext context, String urlString) async {
+    final Uri uri = Uri.parse(urlString);
+    try {
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not launch $urlString')),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
     }
   }
 }

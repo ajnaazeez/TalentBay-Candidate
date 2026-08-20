@@ -176,6 +176,61 @@ class SubscriptionPromptDialog extends ConsumerWidget {
                     ),
                     textAlign: TextAlign.center,
                   ),
+
+                  if (Platform.isIOS) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'Subscriptions automatically renew unless auto-renew is turned off at least 24 hours before the end of the current period. Manage your subscription in your iTunes Account settings.',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: theme.colorScheme.onSurface.withOpacity(0.4),
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        GestureDetector(
+                          onTap: () => PlatformUtils.launchURL(
+                            context,
+                            'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/',
+                          ),
+                          child: const Text(
+                            'Terms of Use (EULA)',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.primaryBrand,
+                              decoration: TextDecoration.underline,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '  •  ',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: theme.colorScheme.onSurface.withOpacity(0.4),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () => PlatformUtils.launchURL(
+                            context,
+                            'https://www.waqtixllp.com/privacy-and-policy',
+                          ),
+                          child: const Text(
+                            'Privacy Policy',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.primaryBrand,
+                              decoration: TextDecoration.underline,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
