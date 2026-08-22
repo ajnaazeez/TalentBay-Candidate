@@ -73,7 +73,6 @@ class _MyAppState extends ConsumerState<MyApp> {
         
         return MediaQuery(
           data: mediaQueryData.copyWith(
-            textScaleFactor: textScaleFactor,
             textScaler: TextScaler.linear(textScaleFactor),
           ),
           child: child,

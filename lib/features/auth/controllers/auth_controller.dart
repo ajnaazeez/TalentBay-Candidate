@@ -9,7 +9,19 @@ final authControllerProvider = AsyncNotifierProvider<AuthController, void>(() {
 });
 
 final authStateChangesProvider = StreamProvider<User?>((ref) {
-  return ref.watch(authRepositoryProvider).authStateChanges;
+  final authRepository = ref.watch(authRepositoryProvider);
+  return authRepository.authStateChanges.asyncMap((user) async {
+    if (user != null) {
+      try {
+        await authRepository.verifyUserRole(user);
+      } catch (e) {
+        // If user fails role verification (e.g. wrong-role, which calls signOut() internally),
+        // we return null to cleanly place the stream in an unauthenticated state.
+        return null;
+      }
+    }
+    return user;
+  });
 });
 
 class AuthController extends AsyncNotifier<void> {

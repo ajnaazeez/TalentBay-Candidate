@@ -25,7 +25,7 @@ class AuthRepository {
       // Check user role
       final user = userCredential.user;
       if (user != null) {
-        await _verifyUserRole(user);
+        await verifyUserRole(user);
       }
 
       return userCredential;
@@ -34,7 +34,7 @@ class AuthRepository {
     }
   }
 
-  Future<void> _verifyUserRole(User user) async {
+  Future<void> verifyUserRole(User user) async {
     final userDoc = await _firestore.collection('users').doc(user.uid).get();
 
     if (userDoc.exists) {
@@ -45,6 +45,24 @@ class AuthRepository {
           code: 'wrong-role',
           message: 'User is invalid in this application',
         );
+      }
+
+      // If candidate user exists, ensure /candidates/{uid} document is also initialized
+      final candidateDoc = await _firestore.collection('candidates').doc(user.uid).get();
+      if (!candidateDoc.exists) {
+        final candidate = CandidateModel(
+          uid: user.uid,
+          email: user.email ?? '',
+          createdAt: DateTime.now(),
+          lastUpdated: DateTime.now(),
+          isPremium: false,
+          subscriptionStatus: 'none',
+          hasUsedTrial: false,
+        );
+        await _firestore
+            .collection('candidates')
+            .doc(user.uid)
+            .set(candidate.toMap());
       }
     } else {
       // Fallback: Check if it's a recruiter (since we are in candidate app)
@@ -59,13 +77,35 @@ class AuthRepository {
           message: 'User is invalid in this application',
         );
       }
+
+      // If neither user nor recruiter document exists, auto-initialize candidate profile
+      final candidate = CandidateModel(
+        uid: user.uid,
+        email: user.email ?? '',
+        createdAt: DateTime.now(),
+        lastUpdated: DateTime.now(),
+        isPremium: false,
+        subscriptionStatus: 'none',
+        hasUsedTrial: false,
+      );
+
+      await _firestore
+          .collection('candidates')
+          .doc(user.uid)
+          .set(candidate.toMap());
+
+      await _firestore.collection('users').doc(user.uid).set({
+        'role': 'candidate',
+        'email': user.email ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     }
   }
 
   Future<UserCredential> signInWithCredential(AuthCredential credential) async {
     final userCredential = await _auth.signInWithCredential(credential);
     if (userCredential.user != null) {
-      await _verifyUserRole(userCredential.user!);
+      await verifyUserRole(userCredential.user!);
     }
     return userCredential;
   }

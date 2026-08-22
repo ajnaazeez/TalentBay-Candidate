@@ -11,7 +11,7 @@ final candidateControllerProvider =
     );
 
 class CandidateController extends StreamNotifier<CandidateModel?> {
-  late final CandidateRepository _repository;
+  late CandidateRepository _repository;
 
   @override
   Stream<CandidateModel?> build() {
