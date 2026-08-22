@@ -205,33 +205,38 @@ class _HomeTabState extends ConsumerState<HomeTab>
                                 ],
                               ),
                               const SizedBox(width: 8),
-                              Container(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.black,
-                                    width: 1.5,
+                              GestureDetector(
+                                onTap: () {
+                                  context.push('/profile');
+                                },
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.black,
+                                      width: 1.5,
+                                    ),
                                   ),
-                                ),
-                                child: CircleAvatar(
-                                  radius: 22,
-                                  backgroundColor: isDark
-                                      ? Colors.grey[900]
-                                      : Colors.white,
-                                  backgroundImage:
-                                      (candidate?.photoUrl != null &&
-                                          candidate!.photoUrl!.isNotEmpty)
-                                      ? NetworkImage(candidate.photoUrl!)
-                                      : null,
-                                  child:
-                                      (candidate?.photoUrl == null ||
-                                          candidate!.photoUrl!.isEmpty)
-                                      ? Icon(
-                                          Icons.person_outline,
-                                          color: textColor,
-                                          size: 24,
-                                        )
-                                      : null,
+                                  child: CircleAvatar(
+                                    radius: 22,
+                                    backgroundColor: isDark
+                                        ? Colors.grey[900]
+                                        : Colors.white,
+                                    backgroundImage:
+                                        (candidate?.photoUrl != null &&
+                                            candidate!.photoUrl!.isNotEmpty)
+                                        ? NetworkImage(candidate.photoUrl!)
+                                        : null,
+                                    child:
+                                        (candidate?.photoUrl == null ||
+                                            candidate!.photoUrl!.isEmpty)
+                                        ? Icon(
+                                            Icons.person_outline,
+                                            color: textColor,
+                                            size: 24,
+                                          )
+                                        : null,
+                                  ),
                                 ),
                               ),
                             ],
