@@ -1,30 +1,35 @@
-import 'package:google_generative_ai/google_generative_ai.dart';
-import '../constants/app_constants.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 class GeminiService {
   static final GeminiService _instance = GeminiService._internal();
   factory GeminiService() => _instance;
 
-  late final GenerativeModel _model;
+  final FirebaseFunctions _functions;
 
-  GeminiService._internal() {
-    _model = GenerativeModel(
-      model: AppConstants.geminiModel,
-      apiKey: AppConstants.googleApiKey,
-    );
-  }
+  GeminiService._internal()
+      : _functions = FirebaseFunctions.instanceFor(region: 'us-central1');
 
-  Future<String?> enhanceText(String prompt) async {
+  Future<String?> enhanceText(
+    String prompt, {
+    String? type,
+    Map<String, String>? context,
+  }) async {
     try {
-      if (AppConstants.googleApiKey == 'YOUR_API_KEY') {
-        throw Exception('API Key not configured');
-      }
+      final callable = _functions.httpsCallable('enhanceText');
+      final response = await callable.call<Map<String, dynamic>>({
+        'text': prompt,
+        if (type != null) 'type': type,
+        if (context != null) 'context': context,
+      });
 
-      final content = [Content.text(prompt)];
-      final response = await _model.generateContent(content);
-      return response.text?.trim();
+      final data = response.data;
+      final enhancedText = data['enhancedText'] as String?;
+      return enhancedText?.trim();
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? 'Failed to enhance description');
     } catch (e) {
       rethrow;
     }
   }
 }
+
