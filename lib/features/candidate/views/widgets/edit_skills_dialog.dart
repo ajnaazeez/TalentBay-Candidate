@@ -35,19 +35,27 @@ class _EditSkillsDialogState extends State<EditSkillsDialog> {
 
   void _addSkill() {
     final text = _skillController.text.trim();
-    if (text.isNotEmpty) {
+    if (text.isEmpty) return;
+
+    final exists = _skills.any(
+      (s) => s.name.toLowerCase() == text.toLowerCase(),
+    );
+
+    if (!exists) {
       setState(() {
         _skills.add(
           Skill(name: text, type: 'Primary', level: 'Intermediate'),
-        ); // Default/Simple for now
+        );
       });
-      _skillController.clear();
     }
+    _skillController.clear();
   }
 
   void _removeSkill(Skill skill) {
     setState(() {
-      _skills.remove(skill);
+      _skills.removeWhere(
+        (s) => s.name.toLowerCase() == skill.name.toLowerCase(),
+      );
     });
   }
 
@@ -81,6 +89,8 @@ class _EditSkillsDialogState extends State<EditSkillsDialog> {
                 Expanded(
                   child: TextField(
                     controller: _skillController,
+                    textInputAction: TextInputAction.done,
+                    textCapitalization: TextCapitalization.words,
                     style: TextStyle(
                       color: isDark
                           ? AppColors.textMainDark
@@ -133,49 +143,56 @@ class _EditSkillsDialogState extends State<EditSkillsDialog> {
                 const SizedBox(width: 8),
                 IconButton(
                   onPressed: _addSkill,
-                  icon: Icon(Icons.add_circle, color: AppColors.primaryBrand),
+                  tooltip: 'Add Skill',
+                  icon: const Icon(
+                    Icons.add_circle,
+                    color: AppColors.primaryBrand,
+                    size: 28,
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _skills.map((skill) {
-                return Chip(
-                  label: Text(
-                    skill.name.toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                      color: isDark
-                          ? AppColors.textMainDark
-                          : AppColors.textMainLight,
+            if (_skills.isNotEmpty)
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _skills.map((skill) {
+                  return Chip(
+                    label: Text(
+                      skill.name.toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                        color: isDark
+                            ? AppColors.textMainDark
+                            : AppColors.textMainLight,
+                      ),
                     ),
-                  ),
-                  backgroundColor: isDark
-                      ? AppColors.cardDark
-                      : AppColors.cardLight,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.zero,
-                    side: BorderSide(
-                      color: isDark
-                          ? AppColors.borderDark
-                          : AppColors.borderLight,
+                    backgroundColor: isDark
+                        ? AppColors.surfaceDark
+                        : AppColors.surfaceLight,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.zero,
+                      side: BorderSide(
+                        color: isDark
+                            ? AppColors.borderDark
+                            : const Color(0xFFBDD4E7),
+                        width: 1,
+                      ),
                     ),
-                  ),
-                  deleteIcon: Icon(
-                    Icons.close,
-                    size: 14,
-                    color: isDark
-                        ? AppColors.textMainDark
-                        : AppColors.textMainLight,
-                  ),
-                  onDeleted: () => _removeSkill(skill),
-                );
-              }).toList(),
-            ),
+                    deleteIcon: Icon(
+                      Icons.close,
+                      size: 14,
+                      color: isDark
+                          ? AppColors.textSubDark
+                          : AppColors.textSubLight,
+                    ),
+                    onDeleted: () => _removeSkill(skill),
+                  );
+                }).toList(),
+              ),
           ],
         ),
       ),
@@ -208,3 +225,4 @@ class _EditSkillsDialogState extends State<EditSkillsDialog> {
     );
   }
 }
+

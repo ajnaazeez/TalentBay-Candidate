@@ -1,8 +1,11 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 class FirebaseErrorHandler {
   static String getMessage(Object error) {
-    if (error is FirebaseAuthException) {
+    if (error is FirebaseFunctionsException) {
+      return error.message ?? 'An error occurred while communicating with the AI service.';
+    } else if (error is FirebaseAuthException) {
       switch (error.code) {
         case 'user-not-found':
           return 'No user found with this email.';
