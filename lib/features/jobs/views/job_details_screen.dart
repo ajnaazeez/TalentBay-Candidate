@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../candidate/controllers/candidate_controller.dart';
@@ -26,6 +27,17 @@ class _JobDetailsScreenState extends ConsumerState<JobDetailsScreen> {
   String _lastCandidateId = '';
 
   void _applyToJob(JobModel job, String candidateId) async {
+    final effectiveCandidateId = candidateId.isNotEmpty
+        ? candidateId
+        : (FirebaseAuth.instance.currentUser?.uid ?? '');
+
+    if (effectiveCandidateId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to apply for this job.')),
+      );
+      return;
+    }
+
     final candidate = ref.read(candidateControllerProvider).value;
     if (candidate != null && !candidate.isPremium) {
       SubscriptionPromptDialog.show(context);
@@ -37,25 +49,34 @@ class _JobDetailsScreenState extends ConsumerState<JobDetailsScreen> {
     });
 
     try {
-      final applicationStream = ref.read(jobRepositoryProvider).getApplicationStatus(job.jobId, candidateId);
+      final applicationStream = ref
+          .read(jobRepositoryProvider)
+          .getApplicationStatus(job.jobId, effectiveCandidateId);
       final existingApplication = await applicationStream.first;
 
-      if (existingApplication != null && existingApplication.applicationStatus.toLowerCase() == 'invited') {
+      if (existingApplication != null &&
+          existingApplication.applicationStatus.toLowerCase() == 'invited') {
         // Handle invitation acceptance
-        await ref.read(jobRepositoryProvider).acceptInvitation(existingApplication.applicationId);
+        await ref
+            .read(jobRepositoryProvider)
+            .acceptInvitation(existingApplication.applicationId);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Invitation accepted and application submitted!')),
+            const SnackBar(
+              content: Text(
+                'Invitation accepted and application submitted!',
+              ),
+            ),
           );
         }
       } else {
         // Standard application
         final application = JobApplicationModel(
-          applicationId: '${job.jobId}_$candidateId',
+          applicationId: '${job.jobId}_$effectiveCandidateId',
           jobId: job.jobId,
-          candidateId: candidateId,
-          resumeUrl: '', // TODO: Get from candidate profile
-          coverLetter: '', // Optional: Add dialog to enter cover letter
+          candidateId: effectiveCandidateId,
+          resumeUrl: candidate?.resumeUrl ?? '',
+          coverLetter: '',
           applicationStatus: 'applied',
           appliedAt: DateTime.now(),
           source: 'app',
@@ -126,7 +147,10 @@ class _JobDetailsScreenState extends ConsumerState<JobDetailsScreen> {
 
   Widget _buildJobContent(BuildContext context, WidgetRef ref, JobModel job) {
     final candidateState = ref.watch(candidateControllerProvider);
-    final candidateId = candidateState.value?.uid ?? '';
+    final candidateId =
+        candidateState.value?.uid ??
+        FirebaseAuth.instance.currentUser?.uid ??
+        '';
 
     // Check if applied (Cache the stream to avoid StreamBuilder resets on setState)
     if (_applicationStream == null || _lastCandidateId != candidateId) {
@@ -442,24 +466,27 @@ class _JobDetailsScreenState extends ConsumerState<JobDetailsScreen> {
             final application = snapshot.data;
             final status = application?.applicationStatus.toLowerCase() ?? '';
             final isWaiting = snapshot.connectionState == ConnectionState.waiting;
-            
+            final isCandidateLoading = candidateState.isLoading;
+
             final hasActuallyApplied = application != null && status != 'invited';
             final hasActuallyBeenInvited = application != null && status == 'invited';
+            final isUnauthenticated = candidateId.isEmpty && FirebaseAuth.instance.currentUser == null;
 
             final canApply =
                 candidateId.isNotEmpty &&
                 !hasActuallyApplied &&
-                !_isApplying &&
-                !isWaiting;
+                !_isApplying;
 
             Color buttonColor = AppColors.primaryBrand;
             Color textColor = Colors.white;
             String buttonText = 'APPLY NOW';
 
-            if (isWaiting || candidateId.isEmpty) {
-              buttonColor = isDark ? Colors.grey[900]! : Colors.grey[300]!;
-              textColor = isDark ? Colors.grey[600]! : Colors.grey[500]!;
-              buttonText = 'LOADING...';
+            if (_isApplying) {
+              buttonText = 'APPLYING...';
+            } else if (isUnauthenticated) {
+              buttonColor = isDark ? Colors.grey[800]! : Colors.grey[400]!;
+              textColor = isDark ? Colors.grey[400]! : Colors.white;
+              buttonText = 'LOGIN TO APPLY';
             } else if (hasActuallyBeenInvited) {
               buttonColor = Colors.blue;
               buttonText = 'ACCEPT & APPLY';
@@ -467,6 +494,10 @@ class _JobDetailsScreenState extends ConsumerState<JobDetailsScreen> {
               buttonColor = isDark ? Colors.grey[900]! : Colors.grey[300]!;
               textColor = isDark ? Colors.grey[600]! : Colors.grey[500]!;
               buttonText = 'APPLIED';
+            } else if (isWaiting && candidateId.isEmpty) {
+              buttonColor = isDark ? Colors.grey[900]! : Colors.grey[300]!;
+              textColor = isDark ? Colors.grey[600]! : Colors.grey[500]!;
+              buttonText = 'LOADING...';
             }
 
             return SizedBox(
@@ -486,7 +517,7 @@ class _JobDetailsScreenState extends ConsumerState<JobDetailsScreen> {
                   ), // Sharp
                   padding: EdgeInsets.zero,
                 ),
-                child: _isApplying || isWaiting
+                child: _isApplying || (isWaiting && candidateId.isNotEmpty)
                     ? SizedBox(
                         height: 20,
                         width: 20,

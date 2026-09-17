@@ -76,13 +76,16 @@ class JobRepository {
     String jobId,
     String candidateId,
   ) {
+    if (jobId.isEmpty || candidateId.isEmpty) {
+      return Stream.value(null);
+    }
     final applicationId = '${jobId}_$candidateId';
     return _firestore
         .collection('job_applications')
         .doc(applicationId)
         .snapshots()
         .map((snapshot) {
-          if (!snapshot.exists) return null;
+          if (!snapshot.exists || snapshot.data() == null) return null;
           return JobApplicationModel.fromMap(snapshot.data()!, snapshot.id);
         });
   }
@@ -122,15 +125,21 @@ class JobRepository {
   Stream<List<JobApplicationModel>> getCandidateApplications(
     String candidateId,
   ) {
+    if (candidateId.isEmpty) {
+      return Stream.value(<JobApplicationModel>[]).asBroadcastStream();
+    }
     return _firestore
         .collection('job_applications')
         .where('candidateId', isEqualTo: candidateId)
-        .orderBy('appliedAt', descending: true)
         .snapshots()
         .map(
-          (snapshot) => snapshot.docs
-              .map((doc) => JobApplicationModel.fromMap(doc.data(), doc.id))
-              .toList(),
+          (snapshot) {
+            final docs = snapshot.docs
+                .map((doc) => JobApplicationModel.fromMap(doc.data(), doc.id))
+                .toList();
+            docs.sort((a, b) => b.appliedAt.compareTo(a.appliedAt));
+            return docs;
+          },
         )
         .asBroadcastStream();
   }

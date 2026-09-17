@@ -53,6 +53,7 @@ class AuthRepository {
         final candidate = CandidateModel(
           uid: user.uid,
           email: user.email ?? '',
+          phoneNumber: user.phoneNumber,
           createdAt: DateTime.now(),
           lastUpdated: DateTime.now(),
           isPremium: false,
@@ -63,6 +64,17 @@ class AuthRepository {
             .collection('candidates')
             .doc(user.uid)
             .set(candidate.toMap());
+      } else {
+        // If candidate doc exists but has missing phone number and user has phone number, preserve it safely
+        final existingPhone = candidateDoc.data()?['phoneNumber'];
+        if ((existingPhone == null || (existingPhone is String && existingPhone.isEmpty)) &&
+            user.phoneNumber != null &&
+            user.phoneNumber!.isNotEmpty) {
+          await _firestore.collection('candidates').doc(user.uid).update({
+            'phoneNumber': user.phoneNumber,
+            'lastUpdated': DateTime.now().toIso8601String(),
+          });
+        }
       }
     } else {
       // Fallback: Check if it's a recruiter (since we are in candidate app)
@@ -82,6 +94,7 @@ class AuthRepository {
       final candidate = CandidateModel(
         uid: user.uid,
         email: user.email ?? '',
+        phoneNumber: user.phoneNumber,
         createdAt: DateTime.now(),
         lastUpdated: DateTime.now(),
         isPremium: false,
@@ -94,11 +107,19 @@ class AuthRepository {
           .doc(user.uid)
           .set(candidate.toMap());
 
-      await _firestore.collection('users').doc(user.uid).set({
+      final userData = <String, dynamic>{
         'role': 'candidate',
         'email': user.email ?? '',
         'createdAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      };
+      if (user.phoneNumber != null && user.phoneNumber!.isNotEmpty) {
+        userData['phoneNumber'] = user.phoneNumber;
+      }
+
+      await _firestore.collection('users').doc(user.uid).set(
+        userData,
+        SetOptions(merge: true),
+      );
     }
   }
 

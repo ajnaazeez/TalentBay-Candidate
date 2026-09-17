@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -45,148 +46,195 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
     final borderColor = isDark ? Colors.grey[800]! : Colors.grey[300]!;
     final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
 
-    if (candidateState.value == null) {
-      return Center(child: CircularProgressIndicator(color: textColor));
-    }
+    return candidateState.when(
+      loading: () => Scaffold(
+        backgroundColor: backgroundColor,
+        body: Center(child: CircularProgressIndicator(color: textColor)),
+      ),
+      error: (error, stack) => Scaffold(
+        backgroundColor: backgroundColor,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 48, color: Colors.red[400]),
+              const SizedBox(height: 16),
+              Text(
+                'FAILED TO LOAD ACTIVITY',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: textColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  error.toString(),
+                  style: TextStyle(fontSize: 14, color: subTextColor),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => ref.invalidate(candidateControllerProvider),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryBrand,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('RETRY'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      data: (candidate) {
+        final candidateId = (candidate?.uid.isNotEmpty == true)
+            ? candidate!.uid
+            : (FirebaseAuth.instance.currentUser?.uid ?? '');
+        final savedJobIds = candidate?.savedJobIds ?? <String>[];
 
-    final candidateId = candidateState.value!.uid;
-
-    return Scaffold(
-      backgroundColor: backgroundColor,
-      body: Column(
-        children: [
-          // Custom Header
-          Container(
-            padding: const EdgeInsets.only(top: 60, bottom: 20),
-            color: backgroundColor,
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Row(
-                    children: [
-                      Text(
-                        'MY ACTIVITY',
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.5,
-                          fontFamily: 'Futura',
+        return Scaffold(
+          backgroundColor: backgroundColor,
+          body: Column(
+            children: [
+              // Custom Header
+              Container(
+                padding: const EdgeInsets.only(top: 60, bottom: 20),
+                color: backgroundColor,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Row(
+                        children: [
+                          Text(
+                            'MY ACTIVITY',
+                            style: TextStyle(
+                              color: textColor,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1.5,
+                              fontFamily: 'Futura',
+                            ),
+                          ),
+                          const Spacer(),
+                          if (candidateId.isNotEmpty)
+                            StreamBuilder<int>(
+                              stream: ref
+                                  .watch(chatRepositoryProvider)
+                                  .getTotalUnreadCount(candidateId),
+                              builder: (context, snapshot) {
+                                final unreadCount = snapshot.data ?? 0;
+                                return Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    IconButton(
+                                      onPressed: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                const ChatListScreen(),
+                                          ),
+                                        );
+                                      },
+                                      icon: Icon(
+                                        Icons.mail_outline,
+                                        color: textColor,
+                                        size: 24,
+                                      ),
+                                    ),
+                                    if (unreadCount > 0)
+                                      Positioned(
+                                        right: 6,
+                                        top: 6,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(4),
+                                          decoration: const BoxDecoration(
+                                            color: AppColors.primaryBrand,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          constraints: const BoxConstraints(
+                                            minWidth: 16,
+                                            minHeight: 16,
+                                          ),
+                                          child: Text(
+                                            unreadCount > 9 ? '9+' : '$unreadCount',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    // Tab Bar
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 24),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(color: borderColor, width: 1),
                         ),
                       ),
-                      const Spacer(),
-                      StreamBuilder<int>(
-                        stream: ref
-                            .watch(chatRepositoryProvider)
-                            .getTotalUnreadCount(candidateId),
-                        builder: (context, snapshot) {
-                          final unreadCount = snapshot.data ?? 0;
-                          return Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              IconButton(
-                                onPressed: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          const ChatListScreen(),
-                                    ),
-                                  );
-                                },
-                                icon: Icon(
-                                  Icons.mail_outline,
-                                  color: textColor,
-                                  size: 24,
-                                ),
-                              ),
-                              if (unreadCount > 0)
-                                Positioned(
-                                  right: 6,
-                                  top: 6,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: const BoxDecoration(
-                                      color: AppColors.primaryBrand,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    constraints: const BoxConstraints(
-                                      minWidth: 16,
-                                      minHeight: 16,
-                                    ),
-                                    child: Text(
-                                      unreadCount > 9 ? '9+' : '$unreadCount',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-                // Tab Bar
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 24),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      bottom: BorderSide(color: borderColor, width: 1),
-                    ),
-                  ),
-                  child: TabBar(
-                    controller: _tabController,
-                    indicator: const UnderlineTabIndicator(
-                      borderSide: BorderSide(
-                        width: 2.0,
-                        color: AppColors.primaryBrand,
+                      child: TabBar(
+                        controller: _tabController,
+                        indicator: const UnderlineTabIndicator(
+                          borderSide: BorderSide(
+                            width: 2.0,
+                            color: AppColors.primaryBrand,
+                          ),
+                        ),
+                        labelColor: AppColors.primaryBrand,
+                        unselectedLabelColor: subTextColor,
+                        labelStyle: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 13,
+                          letterSpacing: 1.0,
+                        ),
+                        unselectedLabelStyle: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          letterSpacing: 1.0,
+                        ),
+                        indicatorSize: TabBarIndicatorSize.tab,
+                        dividerColor: Colors.transparent,
+                        tabs: const [
+                          Tab(text: 'APPLIED'),
+                          Tab(text: 'SAVED'),
+                          Tab(text: 'ACCEPTED'),
+                        ],
                       ),
                     ),
-                    labelColor: AppColors.primaryBrand,
-                    unselectedLabelColor: subTextColor,
-                    labelStyle: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 13,
-                      letterSpacing: 1.0,
-                    ),
-                    unselectedLabelStyle: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      letterSpacing: 1.0,
-                    ),
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    dividerColor: Colors.transparent,
-                    tabs: const [
-                      Tab(text: 'APPLIED'),
-                      Tab(text: 'SAVED'),
-                      Tab(text: 'ACCEPTED'),
-                    ],
-                  ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              // Tab Content
+              Expanded(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildAppliedJobs(jobRepo, candidateId),
+                    _buildSavedJobs(jobRepo, savedJobIds),
+                    _buildAcceptedJobs(jobRepo, candidateId),
+                  ],
+                ),
+              ),
+            ],
           ),
-          // Tab Content
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _buildAppliedJobs(jobRepo, candidateId),
-                _buildSavedJobs(jobRepo, candidateState.value!.savedJobIds),
-                _buildAcceptedJobs(jobRepo, candidateId),
-              ],
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -200,6 +248,31 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
 
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Center(child: CircularProgressIndicator(color: textColor));
+        }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 40, color: Colors.red[400]),
+                const SizedBox(height: 12),
+                Text(
+                  'Error loading applications',
+                  style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    '${snapshot.error}',
+                    style: TextStyle(color: subTextColor, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
+          );
         }
 
         final allApplications = snapshot.data ?? [];
@@ -463,6 +536,31 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
           return Center(child: CircularProgressIndicator(color: textColor));
         }
 
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 40, color: Colors.red[400]),
+                const SizedBox(height: 12),
+                Text(
+                  'Error loading accepted jobs',
+                  style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    '${snapshot.error}',
+                    style: TextStyle(color: subTextColor, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
         final allApplications = snapshot.data ?? [];
         // Filter only accepted/hired applications
         final applications = allApplications
@@ -655,6 +753,32 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Center(child: CircularProgressIndicator(color: textColor));
         }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 40, color: Colors.red[400]),
+                const SizedBox(height: 12),
+                Text(
+                  'Error loading saved jobs',
+                  style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    '${snapshot.error}',
+                    style: TextStyle(color: subTextColor, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
         final jobs = snapshot.data ?? [];
 
         if (jobs.isEmpty) {

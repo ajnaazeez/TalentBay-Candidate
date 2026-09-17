@@ -154,79 +154,125 @@ class CandidateModel {
     };
   }
 
-  factory CandidateModel.fromMap(Map<String, dynamic> map) {
+  factory CandidateModel.fromMap(Map<String, dynamic> map, {String? uid}) {
     DateTime parseDate(dynamic val) {
       if (val is Timestamp) return val.toDate();
-      if (val is String) return DateTime.parse(val);
+      if (val is String) {
+        try {
+          return DateTime.parse(val);
+        } catch (_) {}
+      }
       return DateTime.now();
     }
 
     DateTime? parseNullableDate(dynamic val) {
       if (val == null) return null;
       if (val is Timestamp) return val.toDate();
-      if (val is String) return DateTime.parse(val);
+      if (val is String) {
+        try {
+          return DateTime.parse(val);
+        } catch (_) {}
+      }
       return null;
     }
 
+    List<T> parseList<T>(dynamic rawList, T Function(Map<String, dynamic>) mapper) {
+      if (rawList is! List) return <T>[];
+      final result = <T>[];
+      for (final item in rawList) {
+        if (item is Map) {
+          try {
+            result.add(mapper(Map<String, dynamic>.from(item)));
+          } catch (_) {}
+        }
+      }
+      return result;
+    }
+
+    List<String> parseStringList(dynamic rawList) {
+      if (rawList is! List) return <String>[];
+      return rawList.where((e) => e != null).map((e) => e.toString()).toList();
+    }
+
+    Map<String, String> parseStringMap(dynamic rawMap) {
+      if (rawMap is! Map) return <String, String>{};
+      final result = <String, String>{};
+      rawMap.forEach((key, value) {
+        if (key != null && value != null) {
+          result[key.toString()] = value.toString();
+        }
+      });
+      return result;
+    }
+
+    Address? parseAddress(dynamic rawAddress) {
+      if (rawAddress is Map) {
+        try {
+          return Address.fromMap(Map<String, dynamic>.from(rawAddress));
+        } catch (_) {}
+      }
+      return null;
+    }
+
+    JobPreference? parseJobPreference(dynamic rawJobPref) {
+      if (rawJobPref is Map) {
+        try {
+          return JobPreference.fromMap(Map<String, dynamic>.from(rawJobPref));
+        } catch (_) {}
+      }
+      return null;
+    }
+
+    double parseDouble(dynamic val, {double defaultValue = 0.0}) {
+      if (val is num) return val.toDouble();
+      if (val is String) {
+        return double.tryParse(val) ?? defaultValue;
+      }
+      return defaultValue;
+    }
+
     return CandidateModel(
-      uid: map['uid'] ?? '',
-      email: map['email'] ?? '',
-      phoneNumber: map['phoneNumber'],
-      firstName: map['firstName'],
-      lastName: map['lastName'],
-      photoUrl: map['photoUrl'],
-      designation: map['designation'],
+      uid: (map['uid'] != null && map['uid'].toString().isNotEmpty)
+          ? map['uid'].toString()
+          : (uid ?? ''),
+      email: map['email']?.toString() ?? '',
+      phoneNumber: map['phoneNumber']?.toString(),
+      firstName: map['firstName']?.toString(),
+      lastName: map['lastName']?.toString(),
+      photoUrl: map['photoUrl']?.toString(),
+      designation: map['designation']?.toString(),
       createdAt: parseDate(map['createdAt']),
       dob: parseNullableDate(map['dob']),
-      gender: map['gender'],
-      currentLocation: map['currentLocation'] != null
-          ? Address.fromMap(map['currentLocation'])
-          : null,
-      nationality: map['nationality'],
-      willingToRelocate: map['willingToRelocate'] ?? false,
-      bio: map['bio'],
-      aboutMe: map['aboutMe'],
-      jobPreference: map['jobPreference'] != null
-          ? JobPreference.fromMap(map['jobPreference'])
-          : null,
-      skills: List<Skill>.from(
-        (map['skills'] as List? ?? []).map((x) => Skill.fromMap(x)),
-      ),
-      workExperience: List<WorkExperience>.from(
-        (map['workExperience'] as List? ?? []).map(
-          (x) => WorkExperience.fromMap(x),
-        ),
-      ),
-      education: List<Education>.from(
-        (map['education'] as List? ?? []).map((x) => Education.fromMap(x)),
-      ),
-      projects: List<Project>.from(
-        (map['projects'] as List? ?? []).map((x) => Project.fromMap(x)),
-      ),
-      certifications: List<Certification>.from(
-        (map['certifications'] as List? ?? []).map(
-          (x) => Certification.fromMap(x),
-        ),
-      ),
-      resumeUrl: map['resumeUrl'],
-      portfolioUrl: map['portfolioUrl'],
-      githubProfile: map['githubProfile'],
-      linkedinProfile: map['linkedinProfile'],
-      otherLinks: List<String>.from(map['otherLinks'] ?? []),
-      languages: Map<String, String>.from(map['languages'] ?? {}),
-      achievements: map['achievements'],
-      disabilityInfo: map['disabilityInfo'],
-      savedJobIds: List<String>.from(map['savedJobIds'] ?? []),
-      profileCompletionPercentage: (map['profileCompletionPercentage'] ?? 0.0)
-          .toDouble(),
-      isProfilePublic: map['isProfilePublic'] ?? true,
-      accountStatus: map['accountStatus'] ?? 'Active',
+      gender: map['gender']?.toString(),
+      currentLocation: parseAddress(map['currentLocation']),
+      nationality: map['nationality']?.toString(),
+      willingToRelocate: map['willingToRelocate'] is bool ? map['willingToRelocate'] as bool : false,
+      bio: map['bio']?.toString(),
+      aboutMe: map['aboutMe']?.toString(),
+      jobPreference: parseJobPreference(map['jobPreference']),
+      skills: parseList<Skill>(map['skills'], Skill.fromMap),
+      workExperience: parseList<WorkExperience>(map['workExperience'], WorkExperience.fromMap),
+      education: parseList<Education>(map['education'], Education.fromMap),
+      projects: parseList<Project>(map['projects'], Project.fromMap),
+      certifications: parseList<Certification>(map['certifications'], Certification.fromMap),
+      resumeUrl: map['resumeUrl']?.toString(),
+      portfolioUrl: map['portfolioUrl']?.toString(),
+      githubProfile: map['githubProfile']?.toString(),
+      linkedinProfile: map['linkedinProfile']?.toString(),
+      otherLinks: parseStringList(map['otherLinks']),
+      languages: parseStringMap(map['languages']),
+      achievements: map['achievements']?.toString(),
+      disabilityInfo: map['disabilityInfo']?.toString(),
+      savedJobIds: parseStringList(map['savedJobIds']),
+      profileCompletionPercentage: parseDouble(map['profileCompletionPercentage']),
+      isProfilePublic: map['isProfilePublic'] is bool ? map['isProfilePublic'] as bool : true,
+      accountStatus: map['accountStatus']?.toString() ?? 'Active',
       lastUpdated: parseDate(map['lastUpdated']),
-      isPremium: map['isPremium'] ?? false,
+      isPremium: map['isPremium'] is bool ? map['isPremium'] as bool : false,
       subscriptionExpiryDate: parseNullableDate(map['subscriptionExpiryDate']),
-      subscriptionStatus: map['subscriptionStatus'] ?? 'none',
-      hasUsedTrial: map['hasUsedTrial'] ?? false,
-      appleSubscriptionId: map['appleSubscriptionId'],
+      subscriptionStatus: map['subscriptionStatus']?.toString() ?? 'none',
+      hasUsedTrial: map['hasUsedTrial'] is bool ? map['hasUsedTrial'] as bool : false,
+      appleSubscriptionId: map['appleSubscriptionId']?.toString(),
     );
   }
 

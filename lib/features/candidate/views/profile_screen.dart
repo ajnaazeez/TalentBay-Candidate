@@ -9,6 +9,7 @@ import '../../../core/services/storage_service.dart';
 
 import '../../auth/models/candidate_model.dart';
 import '../../candidate/controllers/candidate_controller.dart';
+import '../repositories/candidate_repository.dart';
 import '../../candidate/models/profile_sections.dart';
 import 'forms/add_edit_education_screen.dart';
 import 'forms/add_edit_experience_screen.dart';
@@ -71,8 +72,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           // Only update if there's a difference
           if ((currentCompletion - calculatedCompletion).abs() > 0.01) {
             await ref
-                .read(candidateControllerProvider.notifier)
-                .updateProfile(
+                .read(candidateRepositoryProvider)
+                .updateCandidate(
                   candidate.copyWith(
                     profileCompletionPercentage: calculatedCompletion,
                   ),
@@ -277,6 +278,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
       body: candidateState.when(
         data: (candidate) {
           if (candidate == null) {
+            final user = FirebaseAuth.instance.currentUser;
+            if (user != null) {
+              return Center(
+                child: CircularProgressIndicator(color: AppColors.primaryBrand),
+              );
+            }
             return const Center(child: Text('No Profile Found'));
           }
 
@@ -360,7 +367,33 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         loading: () => Center(
           child: CircularProgressIndicator(color: AppColors.primaryBrand),
         ),
-        error: (e, s) => Center(child: Text('Error: $e')),
+        error: (e, s) => Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 48, color: Colors.red[400]),
+              const SizedBox(height: 16),
+              const Text(
+                'FAILED TO LOAD PROFILE',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text('$e', textAlign: TextAlign.center),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => ref.invalidate(candidateControllerProvider),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryBrand,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('RETRY'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -29,35 +29,70 @@ class _ExploreTabState extends ConsumerState<ExploreTab> {
   @override
   Widget build(BuildContext context) {
     final candidateState = ref.watch(candidateControllerProvider);
-    final candidate = candidateState.value;
-
-    if (candidate == null) {
-      return Center(
-        child: CircularProgressIndicator(
-          color: Theme.of(context).brightness == Brightness.dark
-              ? Colors.white
-              : Colors.black,
-        ),
-      );
-    }
-
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final backgroundColor = isDark ? Colors.black : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
 
-    // Get candidate's skills
-    final candidateSkills = candidate.skills.map((s) => s.name).toList();
+    return candidateState.when(
+      loading: () => Scaffold(
+        backgroundColor: backgroundColor,
+        body: Center(
+          child: CircularProgressIndicator(
+            color: isDark ? Colors.white : Colors.black,
+          ),
+        ),
+      ),
+      error: (error, stack) => Scaffold(
+        backgroundColor: backgroundColor,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 48, color: Colors.red[400]),
+              const SizedBox(height: 16),
+              Text(
+                'FAILED TO LOAD ASSESSMENTS',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: textColor,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ElevatedButton(
+                onPressed: () => ref.invalidate(candidateControllerProvider),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primaryBrand,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('RETRY'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      data: (candidate) {
+        if (candidate == null) {
+          return Scaffold(
+            backgroundColor: backgroundColor,
+            body: const Center(child: Text('No Candidate Profile Found')),
+          );
+        }
 
-    // Initialize related skills fetch if not already done
-    if (_relatedSkillsFuture == null && candidateSkills.isNotEmpty) {
-      _relatedSkillsFuture = AssessmentService.getRelatedSkills(
-        candidateSkills,
-      );
-    }
+        // Get candidate's skills
+        final candidateSkills = candidate.skills.map((s) => s.name).toList();
 
-    return Scaffold(
-      backgroundColor: backgroundColor,
-      body: CustomScrollView(
+        // Initialize related skills fetch if not already done
+        if (_relatedSkillsFuture == null && candidateSkills.isNotEmpty) {
+          _relatedSkillsFuture = AssessmentService.getRelatedSkills(
+            candidateSkills,
+          );
+        }
+
+        return Scaffold(
+          backgroundColor: backgroundColor,
+          body: CustomScrollView(
         slivers: [
           // Header
           SliverAppBar(
@@ -304,6 +339,8 @@ class _ExploreTabState extends ConsumerState<ExploreTab> {
             ),
         ],
       ),
+    );
+      },
     );
   }
 

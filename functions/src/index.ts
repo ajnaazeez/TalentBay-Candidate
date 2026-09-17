@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
@@ -864,3 +865,596 @@ Do not include any markdown formatting.`;
   }
 );
 
+export const deleteUserAccount = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    // 1. Strict Authentication Check
+    if (!request.auth || !request.auth.uid) {
+      throw new HttpsError("unauthenticated", "You must be signed in to delete your account.");
+    }
+
+    const userId = request.auth.uid;
+    console.log(`[deleteUserAccount] Initiating permanent deletion for UID: ${userId}`);
+
+    try {
+      // 2. Fetch recruiter profile to inspect company and personal assets
+      const recruiterRef = db.collection("recruiters").doc(userId);
+      const recruiterDoc = await recruiterRef.get();
+      const recruiterData = recruiterDoc.exists ? recruiterDoc.data() : null;
+      const companyId = recruiterData?.companyId;
+      const recruiterPhotoUrl = recruiterData?.photoUrl;
+
+      // 3. Handle Company Data with ownership safety
+      if (companyId) {
+        const companyRef = db.collection("companies").doc(companyId);
+        const companyDoc = await companyRef.get();
+        if (companyDoc.exists) {
+          const companyData = companyDoc.data();
+          const createdBy = companyData?.meta?.createdBy;
+
+          // Check if other active recruiters belong to this company
+          const otherRecruiters = await db
+            .collection("recruiters")
+            .where("companyId", "==", companyId)
+            .get();
+
+          const hasOtherRecruiters = otherRecruiters.docs.some(
+            (doc) => doc.id !== userId
+          );
+
+          if (!hasOtherRecruiters && (createdBy === userId || !createdBy)) {
+            // Delete company logo from Storage if hosted in bucket
+            const logoUrl =
+              companyData?.profile?.logoUrl || companyData?.logoUrl;
+            if (logoUrl && typeof logoUrl === "string") {
+              try {
+                const bucket = admin.storage().bucket();
+                const matches = logoUrl.match(/\/o\/([^?]+)/);
+                if (matches && matches[1]) {
+                  const decodedPath = decodeURIComponent(matches[1]);
+                  await bucket
+                    .file(decodedPath)
+                    .delete()
+                    .catch((e: any) => {
+                      console.warn(
+                        `[deleteUserAccount] Storage delete company logo warning: ${e.message}`
+                      );
+                    });
+                }
+              } catch (storageErr: any) {
+                console.warn(
+                  `[deleteUserAccount] Could not delete company logo from storage: ${storageErr.message}`
+                );
+              }
+            }
+            // Delete the company document
+            await companyRef.delete();
+            console.log(`[deleteUserAccount] Deleted company document: ${companyId}`);
+          }
+        }
+      }
+
+      // 4. Handle recruiter profile photo in Firebase Storage if any
+      if (recruiterPhotoUrl && typeof recruiterPhotoUrl === "string") {
+        try {
+          const bucket = admin.storage().bucket();
+          const matches = recruiterPhotoUrl.match(/\/o\/([^?]+)/);
+          if (matches && matches[1]) {
+            const decodedPath = decodeURIComponent(matches[1]);
+            await bucket
+              .file(decodedPath)
+              .delete()
+              .catch((e: any) => {
+                console.warn(
+                  `[deleteUserAccount] Storage delete recruiter photo warning: ${e.message}`
+                );
+              });
+          }
+        } catch (storageErr: any) {
+          console.warn(
+            `[deleteUserAccount] Could not delete recruiter photo from storage: ${storageErr.message}`
+          );
+        }
+      }
+
+      const batchSize = 400;
+      let batch = db.batch();
+      let opCount = 0;
+
+      // 5. Delete recruiter notifications (notification_recruter)
+      const notifQuery = await db
+        .collection("notification_recruter")
+        .where("recruiterId", "==", userId)
+        .get();
+
+      for (const doc of notifQuery.docs) {
+        batch.delete(doc.ref);
+        opCount++;
+        if (opCount >= batchSize) {
+          await batch.commit();
+          batch = db.batch();
+          opCount = 0;
+        }
+      }
+      console.log(`[deleteUserAccount] Deleted ${notifQuery.docs.length} recruiter notifications`);
+
+      // 6. Handle Jobs & Applications posted by this recruiter
+      const jobsQuery = await db
+        .collection("jobs")
+        .where("recruiterId", "==", userId)
+        .get();
+
+      for (const jobDoc of jobsQuery.docs) {
+        const jobId = jobDoc.id;
+
+        // Clean up applications for this job
+        const appsQuery = await db
+          .collection("job_applications")
+          .where("jobId", "==", jobId)
+          .get();
+
+        for (const appDoc of appsQuery.docs) {
+          batch.delete(appDoc.ref);
+          opCount++;
+          if (opCount >= batchSize) {
+            await batch.commit();
+            batch = db.batch();
+            opCount = 0;
+          }
+        }
+
+        // Delete the job doc
+        batch.delete(jobDoc.ref);
+        opCount++;
+        if (opCount >= batchSize) {
+          await batch.commit();
+          batch = db.batch();
+          opCount = 0;
+        }
+      }
+      console.log(`[deleteUserAccount] Deleted ${jobsQuery.docs.length} jobs created by recruiter`);
+
+      // 7. Handle Chats & Messages
+      const chatsQuery = await db
+        .collection("chats")
+        .where("recruiterId", "==", userId)
+        .get();
+
+      for (const chatDoc of chatsQuery.docs) {
+        // Delete messages in subcollection
+        const messagesQuery = await chatDoc.ref.collection("messages").get();
+        for (const msgDoc of messagesQuery.docs) {
+          batch.delete(msgDoc.ref);
+          opCount++;
+          if (opCount >= batchSize) {
+            await batch.commit();
+            batch = db.batch();
+            opCount = 0;
+          }
+        }
+        // Delete the chat document
+        batch.delete(chatDoc.ref);
+        opCount++;
+        if (opCount >= batchSize) {
+          await batch.commit();
+          batch = db.batch();
+          opCount = 0;
+        }
+      }
+      console.log(`[deleteUserAccount] Deleted ${chatsQuery.docs.length} chat threads`);
+
+      // 8. Delete user role doc and recruiter profile doc
+      const userDocRef = db.collection("users").doc(userId);
+      batch.delete(userDocRef);
+      batch.delete(recruiterRef);
+      opCount += 2;
+
+      if (opCount > 0) {
+        await batch.commit();
+      }
+      console.log(`[deleteUserAccount] Deleted users/${userId} and recruiters/${userId}`);
+
+      // 9. Delete Firebase Auth User Record
+      try {
+        await admin.auth().deleteUser(userId);
+        console.log(`[deleteUserAccount] Successfully deleted Firebase Auth user: ${userId}`);
+      } catch (authErr: any) {
+        if (authErr.code !== "auth/user-not-found") {
+          console.error(`[deleteUserAccount] Error deleting Firebase Auth user:`, authErr);
+          throw new HttpsError("internal", "Failed to delete authentication user record.");
+        }
+      }
+
+      return {
+        success: true,
+        message: "User account and associated recruiter data permanently deleted.",
+      };
+    } catch (error: any) {
+      if (error instanceof HttpsError) {
+        throw error;
+      }
+      console.error("[deleteUserAccount] Unhandled error:", error);
+      throw new HttpsError("internal", "An error occurred while deleting your account. Please try again.");
+    }
+  }
+);
+
+
+
+
+// ==========================================
+// Razorpay Subscription Configuration
+// ==========================================
+const SUBSCRIPTION_PLANS = [
+  {
+    id: "trial_60_days_1_rupee",
+    name: "Trial (60 Days)",
+    price: 1,
+    amountPaise: 100,
+    durationDays: 60,
+  },
+  {
+    id: "monthly_1499",
+    name: "Monthly Plan",
+    price: 1499,
+    amountPaise: 149900,
+    durationDays: 30,
+  },
+  {
+    id: "six_months_8549",
+    name: "6 Months Plan",
+    price: 8549,
+    amountPaise: 854900,
+    durationDays: 180,
+  },
+  {
+    id: "yearly_17089",
+    name: "Yearly Plan",
+    price: 17089,
+    amountPaise: 1708900,
+    durationDays: 365,
+  },
+] as const;
+
+/**
+ * createRazorpayOrder (us-central1)
+ * Creates a server-side order with Razorpay.
+ */
+export const createRazorpayOrder = onCall(
+  { secrets: ["RAZORPAY_KEY_SECRET"], region: "us-central1" },
+  async (request) => {
+    // 1. Strict Authentication Check
+    if (!request.auth || !request.auth.uid) {
+      throw new HttpsError("unauthenticated", "You must be signed in to create an order.");
+    }
+    const uid = request.auth.uid;
+
+    const data = request.data as { planId?: string };
+    const planId = data?.planId;
+    if (!planId) {
+      throw new HttpsError("invalid-argument", "Plan ID is required.");
+    }
+
+    const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId);
+    if (!plan) {
+      throw new HttpsError("not-found", `Invalid subscription plan: ${planId}`);
+    }
+
+    // 2. Trial Plan Eligibility Verification
+    if (plan.id === "trial_60_days_1_rupee") {
+      const recruiterDoc = await db.collection("recruiters").doc(uid).get();
+      if (recruiterDoc.exists) {
+        const rData = recruiterDoc.data();
+        if (rData?.subscriptionPlanId || rData?.subscriptionTier) {
+          throw new HttpsError(
+            "failed-precondition",
+            "The introductory trial offer is only available for first-time recruiter accounts."
+          );
+        }
+      }
+    }
+
+    // 3. Razorpay Secrets Validation
+    const keyId = process.env.RAZORPAY_KEY_ID || "rzp_live_TIywUmGVFfdXXf";
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keySecret) {
+      console.error("[createRazorpayOrder] RAZORPAY_KEY_SECRET is not configured in environment or Secret Manager.");
+      throw new HttpsError(
+        "failed-precondition",
+        "RAZORPAY_KEY_SECRET is not configured."
+      );
+    }
+
+    // 4. Create Order via Razorpay REST API
+    try {
+      const authHeader = "Basic " + Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+      const receipt = `ord_${uid.substring(0, 8)}_${Date.now()}`;
+
+      const response = await fetch("https://api.razorpay.com/v1/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({
+          amount: plan.amountPaise,
+          currency: "INR",
+          receipt: receipt,
+          notes: {
+            uid: uid,
+            planId: plan.id,
+            planName: plan.name,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("[createRazorpayOrder] Razorpay API error:", response.status, errText);
+        throw new HttpsError("internal", `Payment gateway order creation failed: ${errText}`);
+      }
+
+      const orderData = (await response.json()) as {
+        id: string;
+        amount: number;
+        currency: string;
+        receipt?: string;
+      };
+
+      console.log(`[createRazorpayOrder] Created order ${orderData.id} for user ${uid}, amount ${orderData.amount} ${orderData.currency}`);
+
+      return {
+        orderId: orderData.id,
+        id: orderData.id,
+        amount: orderData.amount,
+        currency: orderData.currency,
+      };
+    } catch (err: any) {
+      if (err instanceof HttpsError) {
+        throw err;
+      }
+      console.error("[createRazorpayOrder] Unexpected error creating order:", err);
+      throw new HttpsError("internal", "An error occurred while creating your payment order.");
+    }
+  }
+);
+
+/**
+ * verifyRazorpayPayment (us-central1)
+ * Verifies Razorpay payment signature, verifies payment status with Razorpay API,
+ * records payment receipt idempotently, and activates recruiter subscription using Firebase Admin SDK.
+ */
+export const verifyRazorpayPayment = onCall(
+  { secrets: ["RAZORPAY_KEY_SECRET"], region: "us-central1" },
+  async (request) => {
+    // 1. Strict Authentication Check
+    if (!request.auth || !request.auth.uid) {
+      throw new HttpsError("unauthenticated", "You must be signed in to verify payment.");
+    }
+    const uid = request.auth.uid;
+
+    const data = request.data as {
+      paymentId?: string;
+      orderId?: string;
+      signature?: string;
+      planId?: string;
+    };
+
+    const paymentId = data?.paymentId?.trim();
+    if (!paymentId) {
+      throw new HttpsError("invalid-argument", "Payment ID is required.");
+    }
+
+    const planId = data?.planId;
+    if (!planId) {
+      throw new HttpsError("invalid-argument", "Plan ID is required.");
+    }
+
+    const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId);
+    if (!plan) {
+      throw new HttpsError("not-found", `Invalid subscription plan: ${planId}`);
+    }
+
+    // 2. Razorpay Secrets Validation
+    const keyId = process.env.RAZORPAY_KEY_ID || "rzp_live_TIywUmGVFfdXXf";
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keySecret) {
+      console.error("[verifyRazorpayPayment] RAZORPAY_KEY_SECRET is not configured.");
+      throw new HttpsError("failed-precondition", "RAZORPAY_KEY_SECRET is not configured.");
+    }
+
+    // 3. Signature Verification (HMAC-SHA256) if signature & orderId provided
+    if (data.signature && data.orderId) {
+      const generatedSignature = crypto
+        .createHmac("sha256", keySecret)
+        .update(`${data.orderId}|${paymentId}`)
+        .digest("hex");
+
+      if (generatedSignature !== data.signature) {
+        console.error("[verifyRazorpayPayment] Signature mismatch:", {
+          received: data.signature,
+          generated: generatedSignature,
+        });
+        throw new HttpsError("invalid-argument", "Payment signature verification failed.");
+      }
+      console.log(`[verifyRazorpayPayment] Signature verified successfully for payment ${paymentId}`);
+    }
+
+    // 4. Fetch and Verify Payment Details from Razorpay API
+    const authHeader = "Basic " + Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+    let rzpPayment: any = null;
+    try {
+      const rzpRes = await fetch(`https://api.razorpay.com/v1/payments/${paymentId}`, {
+        method: "GET",
+        headers: { Authorization: authHeader },
+      });
+
+      if (!rzpRes.ok) {
+        const errText = await rzpRes.text();
+        console.error("[verifyRazorpayPayment] Razorpay fetch payment error:", rzpRes.status, errText);
+        throw new HttpsError("not-found", "Payment record not found on payment gateway.");
+      }
+
+      rzpPayment = await rzpRes.json();
+    } catch (fetchErr: any) {
+      if (fetchErr instanceof HttpsError) throw fetchErr;
+      console.error("[verifyRazorpayPayment] Error fetching payment from Razorpay:", fetchErr);
+      throw new HttpsError("internal", "Could not verify payment with payment gateway.");
+    }
+
+    // 5. Verify Amount, Currency, and Status
+    if (rzpPayment.currency !== "INR") {
+      throw new HttpsError("invalid-argument", `Invalid payment currency: ${rzpPayment.currency}`);
+    }
+
+    if (Number(rzpPayment.amount) !== plan.amountPaise) {
+      throw new HttpsError(
+        "invalid-argument",
+        `Payment amount mismatch. Expected: ₹${plan.price} (${plan.amountPaise} paise), Found: ${rzpPayment.amount} paise.`
+      );
+    }
+
+    // Handle payment status: if authorized, capture it server-side if needed; if captured, good.
+    if (rzpPayment.status === "authorized") {
+      try {
+        const captureRes = await fetch(`https://api.razorpay.com/v1/payments/${paymentId}/capture`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: authHeader,
+          },
+          body: JSON.stringify({
+            amount: plan.amountPaise,
+            currency: "INR",
+          }),
+        });
+        if (captureRes.ok) {
+          rzpPayment = await captureRes.json();
+          console.log(`[verifyRazorpayPayment] Captured authorized payment ${paymentId}`);
+        }
+      } catch (capErr) {
+        console.warn("[verifyRazorpayPayment] Capture attempt warning:", capErr);
+      }
+    }
+
+    if (rzpPayment.status !== "captured") {
+      throw new HttpsError(
+        "failed-precondition",
+        `Payment is not yet captured (Status: ${rzpPayment.status}). Please wait or complete payment.`
+      );
+    }
+
+    // 6. Idempotency Check on /recruiters/{uid}/payments/{paymentId}
+    const paymentDocRef = db
+      .collection("recruiters")
+      .doc(uid)
+      .collection("payments")
+      .doc(paymentId);
+
+    const existingPayment = await paymentDocRef.get();
+    if (existingPayment.exists && existingPayment.data()?.status === "success") {
+      console.log(`[verifyRazorpayPayment] Payment ${paymentId} already processed idempotently.`);
+      return {
+        success: true,
+        verified: true,
+        alreadyProcessed: true,
+        message: "Payment has already been verified and activated.",
+      };
+    }
+
+    // 7. Calculate Expiry Date & Perform Admin SDK Writes
+    const now = new Date();
+    const expiryDate = new Date(now.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
+    const expiryTimestamp = admin.firestore.Timestamp.fromDate(expiryDate);
+    const serverTime = admin.firestore.FieldValue.serverTimestamp();
+
+    const batch = db.batch();
+
+    // 7a. Write payment receipt
+    batch.set(
+      paymentDocRef,
+      {
+        paymentId: paymentId,
+        orderId: data.orderId || rzpPayment.order_id || null,
+        signature: data.signature || null,
+        planId: plan.id,
+        planName: plan.name,
+        amount: plan.price,
+        amountPaise: plan.amountPaise,
+        currency: "INR",
+        durationDays: plan.durationDays,
+        status: "success",
+        method: rzpPayment.method || "razorpay",
+        email: rzpPayment.email || null,
+        contact: rzpPayment.contact || null,
+        createdAt: serverTime,
+        verifiedAt: serverTime,
+        expiryDate: expiryTimestamp,
+      },
+      { merge: true }
+    );
+
+    // 7b. Update canonical recruiter profile
+    const recruiterRef = db.collection("recruiters").doc(uid);
+    batch.set(
+      recruiterRef,
+      {
+        isSubscribed: true,
+        subscriptionPlanId: plan.id,
+        subscriptionTier: plan.id,
+        subscriptionExpiry: expiryTimestamp,
+        subscriptionStartDate: serverTime,
+        subscriptionDate: serverTime,
+        isSubscriptionCancelled: false,
+        razorpaySubscriptionId: paymentId,
+        paymentId: paymentId,
+        razorpayPaymentId: paymentId,
+        razorpayOrderId: data.orderId || rzpPayment.order_id || null,
+        paymentRef: paymentId,
+        subscriptionAmount: plan.price,
+        subscriptionAmountPaise: plan.amountPaise,
+        updatedAt: serverTime,
+        lastPayment: {
+          paymentId: paymentId,
+          orderId: data.orderId || rzpPayment.order_id || null,
+          planId: plan.id,
+          planName: plan.name,
+          amount: plan.price,
+          amountPaise: plan.amountPaise,
+          currency: "INR",
+          durationDays: plan.durationDays,
+          status: "success",
+          verifiedAt: serverTime,
+          expiryDate: expiryTimestamp,
+        },
+      },
+      { merge: true }
+    );
+
+    // 7c. Update user role document
+    const userRef = db.collection("users").doc(uid);
+    batch.set(
+      userRef,
+      {
+        isSubscribed: true,
+        subscriptionPlanId: plan.id,
+        subscriptionExpiry: expiryTimestamp,
+        updatedAt: serverTime,
+      },
+      { merge: true }
+    );
+
+    await batch.commit();
+    console.log(`[verifyRazorpayPayment] Successfully activated subscription for user ${uid}, plan ${plan.id}, expiry ${expiryDate.toISOString()}`);
+
+    return {
+      success: true,
+      verified: true,
+      expiryDate: expiryDate.toISOString(),
+      planId: plan.id,
+      paymentId: paymentId,
+    };
+  }
+);

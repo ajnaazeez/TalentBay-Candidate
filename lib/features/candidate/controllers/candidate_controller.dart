@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../../auth/models/candidate_model.dart';
@@ -17,7 +18,7 @@ class CandidateController extends StreamNotifier<CandidateModel?> {
   Stream<CandidateModel?> build() {
     _repository = ref.watch(candidateRepositoryProvider);
     final authState = ref.watch(authStateChangesProvider);
-    final user = authState.value;
+    final user = authState.value ?? FirebaseAuth.instance.currentUser;
 
     if (user != null) {
       return _repository.getCandidateStream(user.uid).map((candidate) {

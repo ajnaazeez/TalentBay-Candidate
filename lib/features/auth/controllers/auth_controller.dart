@@ -15,9 +15,12 @@ final authStateChangesProvider = StreamProvider<User?>((ref) {
       try {
         await authRepository.verifyUserRole(user);
       } catch (e) {
-        // If user fails role verification (e.g. wrong-role, which calls signOut() internally),
-        // we return null to cleanly place the stream in an unauthenticated state.
-        return null;
+        // Only return null if wrong-role specifically was confirmed (e.g. recruiter logging into candidate app)
+        if (e is FirebaseAuthException && e.code == 'wrong-role') {
+          return null;
+        }
+        // If it was a network error (e.g. GaiException/DNS) or temporary issue, preserve the user session
+        debugPrint('verifyUserRole note: $e');
       }
     }
     return user;

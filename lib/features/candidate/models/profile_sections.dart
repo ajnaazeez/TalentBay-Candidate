@@ -2,14 +2,22 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 DateTime _parseDate(dynamic val) {
   if (val is Timestamp) return val.toDate();
-  if (val is String) return DateTime.parse(val);
+  if (val is String) {
+    try {
+      return DateTime.parse(val);
+    } catch (_) {}
+  }
   return DateTime.now();
 }
 
 DateTime? _parseNullableDate(dynamic val) {
   if (val == null) return null;
   if (val is Timestamp) return val.toDate();
-  if (val is String) return DateTime.parse(val);
+  if (val is String) {
+    try {
+      return DateTime.parse(val);
+    } catch (_) {}
+  }
   return null;
 }
 
@@ -75,16 +83,24 @@ class JobPreference {
   }
 
   factory JobPreference.fromMap(Map<String, dynamic> map) {
+    double parseNum(dynamic val) {
+      if (val is num) return val.toDouble();
+      if (val is String) return double.tryParse(val) ?? 0.0;
+      return 0.0;
+    }
+
     return JobPreference(
-      role: map['role'] ?? '',
-      employmentType: map['employmentType'] ?? '',
-      workMode: map['workMode'] ?? '',
-      preferredLocations: List<String>.from(map['preferredLocations'] ?? []),
-      preferredIndustry: map['preferredIndustry'] ?? '',
-      salaryCurrency: map['salaryCurrency'] ?? '',
-      salaryMin: (map['salaryMin'] ?? 0).toDouble(),
-      salaryMax: (map['salaryMax'] ?? 0).toDouble(),
-      noticePeriod: map['noticePeriod'] ?? '',
+      role: map['role']?.toString() ?? '',
+      employmentType: map['employmentType']?.toString() ?? '',
+      workMode: map['workMode']?.toString() ?? '',
+      preferredLocations: (map['preferredLocations'] is List)
+          ? (map['preferredLocations'] as List).where((e) => e != null).map((e) => e.toString()).toList()
+          : <String>[],
+      preferredIndustry: map['preferredIndustry']?.toString() ?? '',
+      salaryCurrency: map['salaryCurrency']?.toString() ?? '',
+      salaryMin: parseNum(map['salaryMin']),
+      salaryMax: parseNum(map['salaryMax']),
+      noticePeriod: map['noticePeriod']?.toString() ?? '',
     );
   }
 }
@@ -102,9 +118,9 @@ class Skill {
 
   factory Skill.fromMap(Map<String, dynamic> map) {
     return Skill(
-      name: map['name'] ?? '',
-      type: map['type'] ?? '',
-      level: map['level'] ?? '',
+      name: map['name']?.toString() ?? '',
+      type: map['type']?.toString() ?? '',
+      level: map['level']?.toString() ?? '',
     );
   }
 
@@ -155,14 +171,14 @@ class WorkExperience {
 
   factory WorkExperience.fromMap(Map<String, dynamic> map) {
     return WorkExperience(
-      id: map['id'] ?? '',
-      jobTitle: map['jobTitle'] ?? '',
-      companyName: map['companyName'] ?? '',
-      employmentType: map['employmentType'] ?? '',
+      id: map['id']?.toString() ?? '',
+      jobTitle: map['jobTitle']?.toString() ?? '',
+      companyName: map['companyName']?.toString() ?? '',
+      employmentType: map['employmentType']?.toString() ?? '',
       startDate: _parseDate(map['startDate']),
       endDate: _parseNullableDate(map['endDate']),
-      isCurrent: map['isCurrent'] ?? false,
-      description: map['description'] ?? '',
+      isCurrent: map['isCurrent'] is bool ? map['isCurrent'] as bool : false,
+      description: map['description']?.toString() ?? '',
     );
   }
 }
@@ -199,14 +215,20 @@ class Education {
   }
 
   factory Education.fromMap(Map<String, dynamic> map) {
+    int parseInt(dynamic val) {
+      if (val is num) return val.toInt();
+      if (val is String) return int.tryParse(val) ?? 0;
+      return 0;
+    }
+
     return Education(
-      id: map['id'] ?? '',
-      degree: map['degree'] ?? '',
-      institution: map['institution'] ?? '',
-      fieldOfStudy: map['fieldOfStudy'] ?? '',
-      startYear: map['startYear'] ?? 0,
-      endYear: map['endYear'] ?? 0,
-      grade: map['grade'],
+      id: map['id']?.toString() ?? '',
+      degree: map['degree']?.toString() ?? '',
+      institution: map['institution']?.toString() ?? '',
+      fieldOfStudy: map['fieldOfStudy']?.toString() ?? '',
+      startYear: parseInt(map['startYear']),
+      endYear: parseInt(map['endYear']),
+      grade: map['grade']?.toString(),
     );
   }
 }
@@ -241,12 +263,14 @@ class Project {
 
   factory Project.fromMap(Map<String, dynamic> map) {
     return Project(
-      id: map['id'] ?? '',
-      title: map['title'] ?? '',
-      description: map['description'] ?? '',
-      technologies: List<String>.from(map['technologies'] ?? []),
-      role: map['role'] ?? '',
-      link: map['link'],
+      id: map['id']?.toString() ?? '',
+      title: map['title']?.toString() ?? '',
+      description: map['description']?.toString() ?? '',
+      technologies: (map['technologies'] is List)
+          ? (map['technologies'] as List).where((e) => e != null).map((e) => e.toString()).toList()
+          : <String>[],
+      role: map['role']?.toString() ?? '',
+      link: map['link']?.toString(),
     );
   }
 }
@@ -278,11 +302,11 @@ class Certification {
 
   factory Certification.fromMap(Map<String, dynamic> map) {
     return Certification(
-      name: map['name'] ?? '',
-      organization: map['organization'] ?? '',
+      name: map['name']?.toString() ?? '',
+      organization: map['organization']?.toString() ?? '',
       issueDate: _parseDate(map['issueDate']),
       expiryDate: _parseNullableDate(map['expiryDate']),
-      credentialUrl: map['credentialUrl'],
+      credentialUrl: map['credentialUrl']?.toString(),
     );
   }
 }
