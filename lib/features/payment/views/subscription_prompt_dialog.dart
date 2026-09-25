@@ -159,8 +159,8 @@ class SubscriptionPromptDialog extends ConsumerWidget {
                       getDisplayPrice(plan),
                       getPlanTitle(plan),
                       () {
-                        controller.startSubscription(context, plan);
                         Navigator.pop(context);
+                        controller.startSubscription(context, plan);
                       },
                     );
                   }),

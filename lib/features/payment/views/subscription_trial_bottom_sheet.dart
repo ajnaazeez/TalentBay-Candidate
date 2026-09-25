@@ -123,8 +123,8 @@ class SubscriptionTrialBottomSheet extends ConsumerWidget {
                                 error: (err, stack) => '₹${plan['displayAmount']}',
                               )),
                     () {
-                      controller.startSubscription(context, plan);
                       Navigator.pop(context);
+                      controller.startSubscription(context, plan);
                     },
                   ),
 

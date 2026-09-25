@@ -523,7 +523,15 @@ class _HomeTabState extends ConsumerState<HomeTab>
                   }).toList();
 
                   if (filteredJobs.isEmpty) {
-                    return SliverToBoxAdapter(child: _buildEmptyState());
+                    final bool hasAnyActiveJobs = jobs.isNotEmpty;
+                    return SliverToBoxAdapter(
+                      child: _buildEmptyState(
+                        title: hasAnyActiveJobs ? 'No matching jobs found' : 'No jobs available',
+                        subtitle: hasAnyActiveJobs 
+                            ? 'No jobs match your current profile. Tap "VIEW ALL" to explore all available opportunities.'
+                            : 'Check back later for new opportunities',
+                      ),
+                    );
                   }
 
                   final displayJobs = filteredJobs.take(5).toList();
@@ -943,7 +951,10 @@ class _HomeTabState extends ConsumerState<HomeTab>
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState({
+    String title = 'No jobs available',
+    String subtitle = 'Check back later for new opportunities',
+  }) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(40),
@@ -956,18 +967,20 @@ class _HomeTabState extends ConsumerState<HomeTab>
               color: Colors.grey.shade300,
             ),
             const SizedBox(height: 20),
-            const Text(
-              'No jobs available',
-              style: TextStyle(
+            Text(
+              title,
+              style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
                 color: Color(0xFF1E293B),
               ),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
             Text(
-              'Check back later for new opportunities',
+              subtitle,
               style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+              textAlign: TextAlign.center,
             ),
           ],
         ),

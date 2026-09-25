@@ -154,13 +154,15 @@ class _EditJobPreferenceDialogState extends State<EditJobPreferenceDialog> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'EDIT JOB PREFERENCES',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.0,
-                      color: isDark ? Colors.white : Colors.black,
+                  Expanded(
+                    child: Text(
+                      'EDIT JOB PREFERENCES',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.0,
+                        color: isDark ? Colors.white : Colors.black,
+                      ),
                     ),
                   ),
                   IconButton(

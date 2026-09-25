@@ -88,8 +88,23 @@ class SubscriptionController extends Notifier<bool> {
           orderId = (data['orderId'] ?? data['id'] ?? '').toString();
         }
       } catch (e) {
-        debugPrint('[SubscriptionController] createRazorpayOrder warning: $e');
+        debugPrint('[SubscriptionController] createRazorpayOrder error: $e');
       }
+
+      if (orderId.trim().isEmpty) {
+        debugPrint('[SubscriptionController] Order creation failed or returned empty orderId. Aborting Razorpay checkout.');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Unable to start payment. Please try again.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      debugPrint('[SubscriptionController] Valid orderId received: ${orderId.substring(0, orderId.length > 8 ? 8 : orderId.length)}***. Launching Razorpay checkout.');
 
       _paymentService.openCheckout(
         email: user.email,

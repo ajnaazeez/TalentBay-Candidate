@@ -1,9 +1,6 @@
 class PaymentConstants {
-  static const String razorpayKeyId = 'rzp_live_TIywUmGVFfdXXf';
+  static const String razorpayKeyId = 'rzp_live_TdPCKnpedQNEW6';
   // static const String razorpayKeyId = 'rzp_test_SEJUG8l7U0jbue';
-  static const String razorpayKeySecret = 'WWjcLIcItrw39bakd5v1aRAX';
-  // static const String razorpayKeySecret =
-  //     'UMr8ZEf4Iy0mY775vQVtv8Sm'; // Note: In production, do not store this on client
   static const String currency = 'INR';
   static const String companyName = 'Talent Bay';
 

@@ -998,6 +998,35 @@ exports.deleteUserAccount = (0, https_1.onCall)({ region: "us-central1" }, async
 // ==========================================
 const SUBSCRIPTION_PLANS = [
     {
+        id: "7_days_trial",
+        name: "7 Days Trial",
+        price: 1,
+        amountPaise: 100, // 1.00 INR (100 paise)
+        durationDays: 7,
+    },
+    {
+        id: "1_month",
+        name: "1 Month",
+        price: 399,
+        amountPaise: 39900, // 399.00 INR (39900 paise)
+        durationDays: 30,
+    },
+    {
+        id: "3_months",
+        name: "3 Months",
+        price: 569,
+        amountPaise: 56900, // 569.00 INR (56900 paise)
+        durationDays: 90,
+    },
+    {
+        id: "6_months",
+        name: "6 Months",
+        price: 1079,
+        amountPaise: 107900, // 1079.00 INR (107900 paise)
+        durationDays: 180,
+    },
+    // Legacy / Recruiter compatibility plans
+    {
         id: "trial_60_days_1_rupee",
         name: "Trial (60 Days)",
         price: 1,
@@ -1056,8 +1085,12 @@ exports.createRazorpayOrder = (0, https_1.onCall)({ region: "us-central1" }, asy
         }
     }
     // 3. Razorpay Secrets Validation
-    const keyId = process.env.RAZORPAY_KEY_ID || "rzp_live_TIywUmGVFfdXXf";
-    const keySecret = process.env.RAZORPAY_KEY_SECRET || "WWjcLIcItrw39bakd5v1aRAX";
+    const keyId = process.env.RAZORPAY_KEY_ID || "rzp_live_TdPCKnpedQNEW6";
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    if (!keySecret) {
+        console.error("[createRazorpayOrder] RAZORPAY_KEY_SECRET is not configured.");
+        throw new https_1.HttpsError("failed-precondition", "RAZORPAY_KEY_SECRET is not configured.");
+    }
     // 4. Create Order via Razorpay REST API
     try {
         const authHeader = "Basic " + Buffer.from(`${keyId}:${keySecret}`).toString("base64");
@@ -1127,7 +1160,7 @@ exports.verifyRazorpayPayment = (0, https_1.onCall)({ region: "us-central1" }, a
         throw new https_1.HttpsError("not-found", `Invalid subscription plan: ${planId}`);
     }
     // 2. Razorpay Secrets Validation
-    const keyId = process.env.RAZORPAY_KEY_ID || "rzp_live_TIywUmGVFfdXXf";
+    const keyId = process.env.RAZORPAY_KEY_ID || "rzp_live_TdPCKnpedQNEW6";
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
     if (!keySecret) {
         console.error("[verifyRazorpayPayment] RAZORPAY_KEY_SECRET is not configured.");

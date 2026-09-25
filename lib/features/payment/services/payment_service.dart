@@ -1,5 +1,3 @@
-import 'dart:convert';
-import 'package:crypto/crypto.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 import 'package:talentbay_candidate/core/constants/payment_constants.dart';
 
@@ -51,26 +49,33 @@ class PaymentService {
       },
     };
 
+    // Note: When order_id is passed, Razorpay SDK uses the amount bound to the server-side Order.
+    // Specifying an amount that differs from the backend order will cause Razorpay SDK to reject the checkout.
     if (orderId.trim().isNotEmpty) {
       options['order_id'] = orderId.trim();
+      options.remove('amount');
     }
 
     try {
+      print('[PaymentService] Opening Razorpay checkout with order_id: ${options['order_id']}');
       _razorpay.open(options);
     } catch (e) {
-      print('Razorpay open error: $e');
+      print('[PaymentService] Razorpay open exception: $e');
     }
   }
 
   void _handlePaymentSuccess(PaymentSuccessResponse response) {
+    print('[PaymentService] Payment Success: paymentId=${response.paymentId}, orderId=${response.orderId}');
     _onSuccess?.call(response);
   }
 
   void _handlePaymentError(PaymentFailureResponse response) {
+    print('[PaymentService] Payment Error: code=${response.code}, message=${response.message}');
     _onFailure?.call(response);
   }
 
   void _handleExternalWallet(ExternalWalletResponse response) {
+    print('[PaymentService] External Wallet Selected: ${response.walletName}');
     _onExternalWallet?.call(response);
   }
 
@@ -78,32 +83,13 @@ class PaymentService {
     _razorpay.clear();
   }
 
-  // Client-side signature verification (Note: Less secure than backend)
+  // Signature verification is performed securely on the server via verifyRazorpayPayment Cloud Function.
   bool verifySignature({
     required String orderId,
     required String paymentId,
     required String signature,
   }) {
-    // For standard checkout, the signature is generated using order_id + | + payment_id
-    // But since we might not be creating an order ID on backend for this simple implementation,
-    // Razorpay might just return payment_id in success response if no order_id was passed.
-
-    // IF we passed an order_id in options, we verify:
-    // generated_signature = hmac_sha256(order_id + "|" + payment_id, secret);
-
-    // If not using orders API (just quick payment), signature verification might differ.
-    // Assuming standard flow if orderId is present.
-
-    if (orderId.isEmpty) return true; // weak verification if no order ID
-
-    var bytes = utf8.encode('$orderId|$paymentId');
-    var hmacSha256 = Hmac(
-      sha256,
-      utf8.encode(PaymentConstants.razorpayKeySecret),
-    );
-    var digest = hmacSha256.convert(bytes);
-    var generatedSignature = digest.toString();
-
-    return generatedSignature == signature;
+    // Client-side verification is deprecated; server-side Cloud Function performs verification.
+    return orderId.isNotEmpty && paymentId.isNotEmpty && signature.isNotEmpty;
   }
 }
