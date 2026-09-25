@@ -663,7 +663,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           child: Column(
             children: [
               Text(
-                '${candidate.firstName ?? "Your"} ${candidate.lastName ?? "Name"}',
+                () {
+                  final fName = (candidate.firstName?.trim().isNotEmpty == true)
+                      ? candidate.firstName!.trim()
+                      : (FirebaseAuth.instance.currentUser?.displayName?.split(' ').first.trim().isNotEmpty == true)
+                          ? FirebaseAuth.instance.currentUser!.displayName!.split(' ').first.trim()
+                          : '';
+                  final lName = (candidate.lastName?.trim().isNotEmpty == true)
+                      ? candidate.lastName!.trim()
+                      : (FirebaseAuth.instance.currentUser?.displayName?.split(' ').length ?? 0) > 1
+                          ? FirebaseAuth.instance.currentUser!.displayName!.split(' ').skip(1).join(' ').trim()
+                          : '';
+                  final full = '$fName $lName'.trim();
+                  return full.isNotEmpty
+                      ? full
+                      : (candidate.email.split('@').first.isNotEmpty
+                          ? candidate.email.split('@').first
+                          : 'Candidate Profile');
+                }(),
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.normal, // Regular weight, not bold

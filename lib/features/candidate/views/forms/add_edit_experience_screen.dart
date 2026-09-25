@@ -126,10 +126,14 @@ class _AddEditExperienceScreenState
     });
 
     try {
-      final prompt =
-          'Enhance this job description for a resume. Job Title: "${_titleController.text}", Company: "${_companyController.text}". Current Description: "${_descriptionController.text}". Make it professional, focusing on achievements and responsibilities. Return only the enhanced description text.';
-
-      final enhancedText = await GeminiService().enhanceText(prompt);
+      final enhancedText = await GeminiService().enhanceText(
+        _descriptionController.text.trim(),
+        type: 'experience',
+        context: {
+          'title': _titleController.text.trim(),
+          'company': _companyController.text.trim(),
+        },
+      );
 
       if (enhancedText != null && mounted) {
         _descriptionController.text = enhancedText;

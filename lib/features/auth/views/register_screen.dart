@@ -27,6 +27,31 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   String _fullPhoneNumber = '';
 
   Future<void> _signUp() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+    final firstName = _firstNameController.text.trim();
+    final lastName = _lastNameController.text.trim();
+
+    if (email.isEmpty || !email.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid email address.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    if (password.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Password must be at least 6 characters long.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
     if (!_agreedToTerms) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -42,61 +67,29 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     final phoneNumber = _fullPhoneNumber.isNotEmpty
         ? _fullPhoneNumber
         : _phoneController.text.trim();
-    final hasPhoneNumber = phoneNumber.isNotEmpty;
 
-    if (hasPhoneNumber) {
-      // Send OTP first
-      ref
-          .read(authControllerProvider.notifier)
-          .sendOtp(
-            context: context,
-            phoneNumber: phoneNumber.startsWith('+')
-                ? phoneNumber
-                : '+91$phoneNumber',
-            onCodeSent: (verificationId) {
-              context.push(
-                '/otp-verification',
-                extra: {
-                  'verificationId': verificationId,
-                  'phoneNumber': phoneNumber,
-                  'verificationType': 'register',
-                  'registrationData': {
-                    'email': _emailController.text.trim(),
-                    'password': _passwordController.text.trim(),
-                    'firstName': _firstNameController.text.trim(),
-                    'lastName': _lastNameController.text.trim(),
-                    'phoneNumber': phoneNumber,
-                  },
-                },
-              );
-            },
-            verificationCompleted: (credential) {
-              ref.read(authControllerProvider.notifier).completeRegistration(
-                context,
-                email: _emailController.text.trim(),
-                password: _passwordController.text.trim(),
-                firstName: _firstNameController.text.trim(),
-                lastName: _lastNameController.text.trim(),
-                phoneNumber: phoneNumber,
-                credential: credential,
-              );
-            },
-          );
-      return;
-    }
-
-    // If no phone number, proceed with normal sign up
-    await ref
+    // Send Email OTP first for email verification
+    final sent = await ref
         .read(authControllerProvider.notifier)
-        .signUpWithEmail(
-          context,
-          email: _emailController.text.trim(),
-          password: _passwordController.text.trim(),
-          firstName: _firstNameController.text.trim(),
-          lastName: _lastNameController.text.trim(),
-          phoneNumber: null,
-          shouldNavigate: true,
-        );
+        .sendEmailOtp(context, email);
+
+    if (sent && mounted) {
+      context.push(
+        '/otp-verification',
+        extra: {
+          'verificationId': 'email_otp_$email',
+          'phoneNumber': email,
+          'verificationType': 'email_register',
+          'registrationData': {
+            'email': email,
+            'password': password,
+            'firstName': firstName,
+            'lastName': lastName,
+            'phoneNumber': phoneNumber,
+          },
+        },
+      );
+    }
   }
 
   @override

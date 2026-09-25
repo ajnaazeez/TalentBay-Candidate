@@ -399,4 +399,56 @@ class AuthController extends AsyncNotifier<void> {
       }
     }
   }
+
+  Future<bool> sendEmailOtp(
+    BuildContext context,
+    String email,
+  ) async {
+    state = const AsyncValue.loading();
+    bool success = false;
+    state = await AsyncValue.guard(() async {
+      await _authRepository.sendEmailOtp(email);
+      success = true;
+    });
+
+    if (state.hasError && context.mounted) {
+      String errorMsg = state.error.toString();
+      if (errorMsg.startsWith('Exception: ')) {
+        errorMsg = errorMsg.replaceFirst('Exception: ', '');
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMsg),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+    return success;
+  }
+
+  Future<bool> verifyEmailOtp(
+    BuildContext context,
+    String email,
+    String otp,
+  ) async {
+    state = const AsyncValue.loading();
+    bool verified = false;
+    state = await AsyncValue.guard(() async {
+      verified = await _authRepository.verifyEmailOtp(email, otp);
+    });
+
+    if (state.hasError && context.mounted) {
+      String errorMsg = state.error.toString();
+      if (errorMsg.startsWith('Exception: ')) {
+        errorMsg = errorMsg.replaceFirst('Exception: ', '');
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMsg),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+    return verified;
+  }
 }

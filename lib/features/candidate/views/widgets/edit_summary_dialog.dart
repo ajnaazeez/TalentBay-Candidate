@@ -50,19 +50,26 @@ class _EditSummaryDialogState extends State<EditSummaryDialog> {
     });
 
     try {
-      final prompt =
-          'Enhance this professional description for a job profile. Headline: "${_bioController.text}", Current Description: "${_aboutMeController.text}". Make it compelling, professional, and highlight key strengths. Return only the enhanced description text.';
-
-      final enhancedText = await GeminiService().enhanceText(prompt);
+      final textToEnhance = _aboutMeController.text.isNotEmpty
+          ? _aboutMeController.text
+          : _bioController.text;
+      final enhancedText = await GeminiService().enhanceText(
+        textToEnhance,
+        type: 'summary',
+        context: {
+          'title': _bioController.text.trim(),
+        },
+      );
 
       if (enhancedText != null && mounted) {
         _aboutMeController.text = enhancedText;
       }
     } catch (e) {
       if (mounted) {
+        final msg = e.toString().replaceAll(RegExp(r'^Exception:\s*'), '');
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Failed to generate: $e')));
+        ).showSnackBar(SnackBar(content: Text('AI Generation Error: $msg')));
       }
     } finally {
       if (mounted) {

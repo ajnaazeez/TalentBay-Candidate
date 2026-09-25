@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
@@ -40,20 +41,18 @@ class SubscriptionController extends Notifier<bool> {
   bool build() {
     _paymentService = PaymentService();
     
-    if (Platform.isIOS) {
-      final purchaseUpdated = InAppPurchase.instance.purchaseStream;
-      _iapSubscription = purchaseUpdated.listen(
-        (purchaseDetailsList) {
-          _listenToPurchaseUpdated(purchaseDetailsList);
-        },
-        onDone: () {
-          _iapSubscription?.cancel();
-        },
-        onError: (error) {
-          debugPrint('IAP purchaseStream error: $error');
-        },
-      );
-    }
+    final purchaseUpdated = InAppPurchase.instance.purchaseStream;
+    _iapSubscription = purchaseUpdated.listen(
+      (purchaseDetailsList) {
+        _listenToPurchaseUpdated(purchaseDetailsList);
+      },
+      onDone: () {
+        _iapSubscription?.cancel();
+      },
+      onError: (error) {
+        debugPrint('IAP purchaseStream error: $error');
+      },
+    );
 
     // Dispose payment service and IAP subscription when provider is disposed
     ref.onDispose(() {
@@ -79,12 +78,25 @@ class SubscriptionController extends Notifier<bool> {
       // Initialize if not already (safeguard)
       initializePayment(context);
 
+      String orderId = '';
+      try {
+        final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+            .httpsCallable('createRazorpayOrder');
+        final response = await callable.call({'planId': plan['id']});
+        final data = response.data;
+        if (data != null && data is Map) {
+          orderId = (data['orderId'] ?? data['id'] ?? '').toString();
+        }
+      } catch (e) {
+        debugPrint('[SubscriptionController] createRazorpayOrder warning: $e');
+      }
+
       _paymentService.openCheckout(
         email: user.email,
         contact: user.phoneNumber ?? '',
         amount: plan['amount'],
         description: plan['description'],
-        orderId: '', // Client-side only
+        orderId: orderId,
       );
 
       _selectedPlanDurationDays = plan['durationDays'];
@@ -274,5 +286,32 @@ class SubscriptionController extends Notifier<bool> {
 
   void _handleExternalWallet(ExternalWalletResponse response) {
     // Handle external wallet
+  }
+
+  Future<void> restorePurchases(BuildContext context) async {
+    state = true;
+    try {
+      final bool available = await InAppPurchase.instance.isAvailable();
+      if (!available) {
+        throw Exception('In-App Purchases not available on this device');
+      }
+      await InAppPurchase.instance.restorePurchases();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Purchases restored successfully.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to restore purchases: $e')),
+        );
+      }
+    } finally {
+      state = false;
+    }
   }
 }

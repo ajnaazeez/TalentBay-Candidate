@@ -4,6 +4,7 @@ import 'tabs/activity_tab.dart';
 import 'tabs/explore_tab.dart';
 import '../../candidate/views/profile_screen.dart';
 import '../../settings/views/settings_screen.dart';
+import '../../../core/widgets/ad_banner_widget.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -65,23 +66,29 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: IndexedStack(index: _currentIndex, children: _tabs),
       extendBody: false,
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: navBarColor,
-          border: Border(top: BorderSide(color: borderColor, width: 1)),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: List.generate(
-                _navItems.length,
-                (index) => _buildNavItem(index),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const AdBannerWidget(),
+          Container(
+            decoration: BoxDecoration(
+              color: navBarColor,
+              border: Border(top: BorderSide(color: borderColor, width: 1)),
+            ),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: List.generate(
+                    _navItems.length,
+                    (index) => _buildNavItem(index),
+                  ),
+                ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

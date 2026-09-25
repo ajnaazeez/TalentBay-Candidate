@@ -92,10 +92,14 @@ class _AddEditProjectScreenState extends State<AddEditProjectScreen> {
     });
 
     try {
-      final prompt =
-          'Enhance this project description for a portfolio. Title: "${_titleController.text}", Role: "${_roleController.text}", Technologies: "${_technologiesController.text}". Current Description: "${_descriptionController.text}". Make it professional, highlighting the technical challenges and outcome. Return only the enhanced description text.';
-
-      final enhancedText = await GeminiService().enhanceText(prompt);
+      final enhancedText = await GeminiService().enhanceText(
+        _descriptionController.text.trim(),
+        type: 'project',
+        context: {
+          'title': _titleController.text.trim(),
+          'role': _roleController.text.trim(),
+        },
+      );
 
       if (enhancedText != null && mounted) {
         _descriptionController.text = enhancedText;

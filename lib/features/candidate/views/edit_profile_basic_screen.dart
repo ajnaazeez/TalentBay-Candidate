@@ -655,6 +655,15 @@ class _EditProfileBasicScreenState
                                 ? AppColors.textMainDark
                                 : AppColors.textMainLight,
                           ),
+                          validator: (phone) {
+                            if (phone == null || phone.number.trim().isEmpty) {
+                              return 'Mobile number is required';
+                            }
+                            if (!phone.isValidNumber()) {
+                              return 'Please enter a valid mobile number';
+                            }
+                            return null;
+                          },
                           onChanged: (phone) {
                             _completePhoneNumber = phone.completeNumber;
                           },

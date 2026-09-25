@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../jobs/repositories/job_repository.dart';
 import 'package:go_router/go_router.dart';
@@ -87,8 +88,22 @@ class _HomeTabState extends ConsumerState<HomeTab>
 
     final candidate = candidateState.value;
     final uid = candidate?.uid;
-    final fullName =
-        '${candidate?.firstName ?? 'User'} ${candidate?.lastName ?? ''}'.trim();
+    
+    final authUser = FirebaseAuth.instance.currentUser;
+    final fName = (candidate?.firstName?.trim().isNotEmpty == true)
+        ? candidate!.firstName!.trim()
+        : (authUser?.displayName?.split(' ').first.trim().isNotEmpty == true)
+            ? authUser!.displayName!.split(' ').first.trim()
+            : '';
+    final lName = (candidate?.lastName?.trim().isNotEmpty == true)
+        ? candidate!.lastName!.trim()
+        : (authUser?.displayName?.split(' ').length ?? 0) > 1
+            ? authUser!.displayName!.split(' ').skip(1).join(' ').trim()
+            : '';
+    final computedFullName = '$fName $lName'.trim();
+    final fullName = computedFullName.isNotEmpty
+        ? computedFullName
+        : (authUser?.email?.split('@').first ?? 'Candidate');
         
     if (candidate != null && !candidate.hasUsedTrial && !_hasShownTrialPrompt) {
       _hasShownTrialPrompt = true;

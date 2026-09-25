@@ -29,23 +29,36 @@ class PaymentService {
     required String contact,
     required String amount,
     required String description,
-    required String orderId, // Or generate locally if just testing
+    required String orderId,
   }) {
-    var options = {
+    final numAmount = int.tryParse(amount) ?? double.tryParse(amount)?.toInt() ?? 0;
+    final options = <String, dynamic>{
       'key': PaymentConstants.razorpayKeyId,
-      'amount': amount,
+      'amount': numAmount,
+      'currency': PaymentConstants.currency,
       'name': PaymentConstants.companyName,
       'description': description,
-      'prefill': {'contact': contact, 'email': email},
-      'external': {
-        'wallets': ['paytm'],
+      'prefill': {
+        'contact': contact.trim().isNotEmpty ? contact.trim() : '9999999999',
+        'email': email.trim().isNotEmpty ? email.trim() : 'candidate@talentbay.com',
+      },
+      'theme': {
+        'color': '#008080',
+      },
+      'retry': {
+        'enabled': true,
+        'max_count': 1,
       },
     };
+
+    if (orderId.trim().isNotEmpty) {
+      options['order_id'] = orderId.trim();
+    }
 
     try {
       _razorpay.open(options);
     } catch (e) {
-      print('Error: $e');
+      print('Razorpay open error: $e');
     }
   }
 

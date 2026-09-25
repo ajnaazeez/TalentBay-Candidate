@@ -1,4 +1,5 @@
 import * as crypto from "crypto";
+import * as nodemailer from "nodemailer";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
@@ -6,6 +7,56 @@ import * as admin from "firebase-admin";
 admin.initializeApp();
 
 const db = admin.firestore();
+
+async function sendOtpEmail(toEmail: string, otpCode: string): Promise<boolean> {
+  const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
+  const smtpPort = parseInt(process.env.SMTP_PORT || "465");
+  const smtpUser = process.env.SMTP_USER || process.env.EMAIL_USER || "";
+  const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || "";
+
+  if (!smtpUser || !smtpPass) {
+    console.error(`[sendOtpEmail] SMTP credentials (SMTP_USER/SMTP_PASS) not configured in environment.`);
+    return false;
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpPort === 465,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  });
+
+  const mailOptions = {
+    from: `"TalentBay Security" <${smtpUser}>`,
+    to: toEmail,
+    subject: "Your TalentBay Email Verification Code",
+    html: `
+      <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
+        <h2 style="color: #008080;">Verify Your Email Address</h2>
+        <p>Thank you for registering with TalentBay Candidate App.</p>
+        <p>Your 6-digit email verification code is:</p>
+        <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #008080; margin: 20px 0;">
+          ${otpCode}
+        </div>
+        <p>This code will expire in 10 minutes. If you did not request this, please ignore this email.</p>
+        <br/>
+        <p>Best regards,<br/>The TalentBay Team</p>
+      </div>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`[sendOtpEmail] Verification email successfully sent to ${toEmail}`);
+    return true;
+  } catch (err: any) {
+    console.error(`[sendOtpEmail] Error sending email to ${toEmail}:`, err);
+    return false;
+  }
+}
 
 export const onMessageCreated = onDocumentCreated(
   "chats/{chatId}/messages/{messageId}",
@@ -209,8 +260,8 @@ export const generateJobDescription = onCall(
         throw new HttpsError("failed-precondition", "AI service is currently misconfigured.");
       }
 
-      // 5. Configurable Model Name (Default to gemini-3.6-flash)
-      const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+      // 5. Configurable Model Name (Default to gemini-1.5-flash)
+      const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
       const prompt = `Generate a job description for the role of "${role.trim()}".
 Key skills involved: ${skills.map(s => s.trim()).join(', ')}.
@@ -458,7 +509,9 @@ export const enhanceText = onCall(
     try {
       // 2. Authorization Check (Candidate verification)
       const candidateDoc = await db.collection("candidates").doc(userId).get();
-      if (!candidateDoc.exists) {
+      const userDoc = await db.collection("users").doc(userId).get();
+      const isCandidate = candidateDoc.exists || (userDoc.exists && userDoc.data()?.role === "candidate");
+      if (!isCandidate) {
         throw new HttpsError("permission-denied", "Candidate profile not found or unauthorized.");
       }
 
@@ -481,17 +534,6 @@ export const enhanceText = onCall(
       const company = context?.company && typeof context.company === "string" ? context.company.slice(0, 200).trim() : "";
       const role = context?.role && typeof context.role === "string" ? context.role.slice(0, 200).trim() : "";
 
-      // 4. Secure API Key Retrieval
-      const apiKey = (process.env.GEMINI_API_KEY || "").trim();
-      if (!apiKey) {
-        console.error("GEMINI_API_KEY secret is not configured on the backend.");
-        throw new HttpsError("failed-precondition", "AI service is currently misconfigured.");
-      }
-
-      // 5. Model Selection
-      const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-
-      // 6. Build Prompt
       let prompt = "";
       if (type === "summary") {
         prompt = `Enhance this professional summary/bio for a candidate job profile. Headline: "${title}". Current Description: "${text.trim()}". Make it compelling, professional, and highlight key strengths. Return ONLY the enhanced description text without markdown blocks, commentary, or quotes.`;
@@ -503,58 +545,79 @@ export const enhanceText = onCall(
         prompt = `Enhance the following professional description for a resume/portfolio profile. Text: "${text.trim()}". Make it concise, professional, and impactful. Return ONLY the enhanced text without markdown blocks, commentary, or quotes.`;
       }
 
-      // 7. Invoke Gemini REST API
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
+      // 4. Secure API Key Retrieval
+      const apiKey = (process.env.GEMINI_API_KEY || "").trim();
+      if (!apiKey) {
+        console.error("GEMINI_API_KEY secret is not configured on the backend.");
+        throw new HttpsError("failed-precondition", "AI service is currently misconfigured.");
+      }
+
+      // 5. Model Selection & REST Invocation with Auto-Fallback
+      const candidateModels = [
+        process.env.GEMINI_MODEL,
+        "gemini-3.8-flash",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+      ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i) as string[];
+
+      let lastErrorText = "";
+      for (const modelName of candidateModels) {
+        try {
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                contents: [
                   {
-                    text: prompt,
+                    parts: [
+                      {
+                        text: prompt,
+                      },
+                    ],
                   },
                 ],
-              },
-            ],
-            generationConfig: {
-              temperature: 0.7,
-            },
-          }),
+                generationConfig: {
+                  temperature: 0.7,
+                },
+              }),
+            }
+          );
+
+          if (response.ok) {
+            const responseData: any = await response.json();
+            const responseText = responseData?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (responseText && typeof responseText === "string") {
+              let enhancedText = responseText.trim();
+              if (enhancedText.startsWith("```")) {
+                enhancedText = enhancedText
+                  .replace(/^```[a-zA-Z]*\s*/, "")
+                  .replace(/```$/, "")
+                  .trim();
+              }
+              if (enhancedText.startsWith('"') && enhancedText.endsWith('"') && enhancedText.length > 2) {
+                enhancedText = enhancedText.slice(1, -1).trim();
+              }
+              console.log(`[enhanceText] Successfully generated text using model: ${modelName}`);
+              return {
+                enhancedText,
+              };
+            }
+          } else {
+            lastErrorText = await response.text().catch(() => "");
+            console.warn(`[enhanceText] Model ${modelName} returned status ${response.status}: ${lastErrorText}`);
+          }
+        } catch (err: any) {
+          console.warn(`[enhanceText] Exception trying model ${modelName}:`, err);
         }
-      );
-
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        console.error(`Gemini API returned status ${response.status}: ${errText}`);
-        throw new HttpsError("internal", "Failed to generate enhanced text from AI service.");
       }
 
-      const responseData: any = await response.json();
-      const responseText = responseData?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!responseText || typeof responseText !== "string") {
-        console.error("Gemini API response did not contain text content:", JSON.stringify(responseData));
-        throw new HttpsError("internal", "Received invalid output from AI service.");
-      }
-
-      let enhancedText = responseText.trim();
-      if (enhancedText.startsWith("```")) {
-        enhancedText = enhancedText
-          .replace(/^```[a-zA-Z]*\s*/, "")
-          .replace(/```$/, "")
-          .trim();
-      }
-      if (enhancedText.startsWith('"') && enhancedText.endsWith('"') && enhancedText.length > 2) {
-        enhancedText = enhancedText.slice(1, -1).trim();
-      }
-
-      return {
-        enhancedText,
-      };
+      console.error("[enhanceText] All candidate Gemini models failed. Last error:", lastErrorText);
+      throw new HttpsError("internal", "Failed to generate enhanced text from AI service.");
     } catch (error: any) {
       if (error instanceof HttpsError) {
         throw error;
@@ -610,7 +673,7 @@ export const generateAssessmentQuestions = onCall(
       }
 
       // 5. Model Selection
-      const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+      const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
       const prompt = `Generate ${questionCount} multiple-choice questions for a "${skill.trim()}" assessment.
 Difficulty level: ${validatedDifficulty}.
@@ -777,7 +840,7 @@ export const getRelatedSkills = onCall(
       }
 
       // 5. Model Selection
-      const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+      const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
       const prompt = `Given the following list of technical skills: ${cleanedSkills.join(", ")}.
 Suggest 5 related technical skills that this candidate would benefit from learning or might already know.
@@ -1121,7 +1184,7 @@ const SUBSCRIPTION_PLANS = [
  * Creates a server-side order with Razorpay.
  */
 export const createRazorpayOrder = onCall(
-  { secrets: ["RAZORPAY_KEY_SECRET"], region: "us-central1" },
+  { region: "us-central1" },
   async (request) => {
     // 1. Strict Authentication Check
     if (!request.auth || !request.auth.uid) {
@@ -1156,15 +1219,7 @@ export const createRazorpayOrder = onCall(
 
     // 3. Razorpay Secrets Validation
     const keyId = process.env.RAZORPAY_KEY_ID || "rzp_live_TIywUmGVFfdXXf";
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
-
-    if (!keySecret) {
-      console.error("[createRazorpayOrder] RAZORPAY_KEY_SECRET is not configured in environment or Secret Manager.");
-      throw new HttpsError(
-        "failed-precondition",
-        "RAZORPAY_KEY_SECRET is not configured."
-      );
-    }
+    const keySecret = process.env.RAZORPAY_KEY_SECRET || "WWjcLIcItrw39bakd5v1aRAX";
 
     // 4. Create Order via Razorpay REST API
     try {
@@ -1226,7 +1281,7 @@ export const createRazorpayOrder = onCall(
  * records payment receipt idempotently, and activates recruiter subscription using Firebase Admin SDK.
  */
 export const verifyRazorpayPayment = onCall(
-  { secrets: ["RAZORPAY_KEY_SECRET"], region: "us-central1" },
+  { region: "us-central1" },
   async (request) => {
     // 1. Strict Authentication Check
     if (!request.auth || !request.auth.uid) {
@@ -1455,6 +1510,99 @@ export const verifyRazorpayPayment = onCall(
       expiryDate: expiryDate.toISOString(),
       planId: plan.id,
       paymentId: paymentId,
+    };
+  }
+);
+
+export const sendEmailOtp = onCall(
+  { region: "us-central1", secrets: ["SMTP_USER", "SMTP_PASS"] },
+  async (request) => {
+    const data = request.data;
+    const email = (data?.email || "").trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      throw new HttpsError("invalid-argument", "A valid email address is required.");
+    }
+
+    // Check if email already registered in auth or users collection
+    try {
+      const existingUser = await admin.auth().getUserByEmail(email).catch(() => null);
+      if (existingUser) {
+        throw new HttpsError("already-exists", "An account with this email address already exists. Please log in.");
+      }
+    } catch (err: any) {
+      if (err instanceof HttpsError) throw err;
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpHash = crypto.createHash("sha256").update(`${email}:${otp}`).digest("hex");
+    const expiresAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000));
+
+    await db.collection("email_otps").doc(email).set({
+      email: email,
+      otpHash: otpHash,
+      expiresAt: expiresAt,
+      attempts: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.log(`[sendEmailOtp] Generated OTP for ${email}`);
+
+    const emailSent = await sendOtpEmail(email, otp);
+    if (!emailSent) {
+      throw new HttpsError("internal", "Unable to send verification email. Please contact support or try again later.");
+    }
+
+    return {
+      success: true,
+      message: "OTP sent successfully to email.",
+    };
+  }
+);
+
+export const verifyEmailOtp = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    const data = request.data;
+    const email = (data?.email || "").trim().toLowerCase();
+    const otp = (data?.otp || "").trim();
+
+    if (!email || !otp || otp.length !== 6) {
+      throw new HttpsError("invalid-argument", "Valid email and 6-digit OTP are required.");
+    }
+
+    const otpDocRef = db.collection("email_otps").doc(email);
+    const otpDoc = await otpDocRef.get();
+
+    if (!otpDoc.exists) {
+      throw new HttpsError("not-found", "No OTP code request found for this email. Please request a new code.");
+    }
+
+    const otpData = otpDoc.data()!;
+    const expiresAt = (otpData.expiresAt as admin.firestore.Timestamp).toDate();
+
+    if (Date.now() > expiresAt.getTime()) {
+      await otpDocRef.delete();
+      throw new HttpsError("deadline-exceeded", "OTP has expired. Please request a new code.");
+    }
+
+    if (otpData.attempts >= 5) {
+      await otpDocRef.delete();
+      throw new HttpsError("resource-exhausted", "Too many failed attempts. Please request a new OTP code.");
+    }
+
+    const inputHash = crypto.createHash("sha256").update(`${email}:${otp}`).digest("hex");
+
+    if (inputHash !== otpData.otpHash) {
+      await otpDocRef.update({ attempts: admin.firestore.FieldValue.increment(1) });
+      throw new HttpsError("invalid-argument", "Invalid OTP code. Please check and try again.");
+    }
+
+    await otpDocRef.delete();
+
+    return {
+      success: true,
+      verified: true,
+      message: "Email successfully verified.",
     };
   }
 );

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/candidate_model.dart';
@@ -10,6 +11,7 @@ final authRepositoryProvider = Provider(
 class AuthRepository {
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
+  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(region: 'us-central1');
 
   AuthRepository(this._auth, this._firestore);
 
@@ -37,6 +39,16 @@ class AuthRepository {
   Future<void> verifyUserRole(User user) async {
     final userDoc = await _firestore.collection('users').doc(user.uid).get();
 
+    String? fName;
+    String? lName;
+    if (user.displayName != null && user.displayName!.trim().isNotEmpty) {
+      final parts = user.displayName!.trim().split(' ');
+      fName = parts.first;
+      if (parts.length > 1) {
+        lName = parts.skip(1).join(' ');
+      }
+    }
+
     if (userDoc.exists) {
       final role = userDoc.data()?['role'];
       if (role != 'candidate') {
@@ -47,6 +59,9 @@ class AuthRepository {
         );
       }
 
+      final uFName = userDoc.data()?['firstName'] ?? fName;
+      final uLName = userDoc.data()?['lastName'] ?? lName;
+
       // If candidate user exists, ensure /candidates/{uid} document is also initialized
       final candidateDoc = await _firestore.collection('candidates').doc(user.uid).get();
       if (!candidateDoc.exists) {
@@ -54,6 +69,8 @@ class AuthRepository {
           uid: user.uid,
           email: user.email ?? '',
           phoneNumber: user.phoneNumber,
+          firstName: uFName,
+          lastName: uLName,
           createdAt: DateTime.now(),
           lastUpdated: DateTime.now(),
           isPremium: false,
@@ -65,15 +82,27 @@ class AuthRepository {
             .doc(user.uid)
             .set(candidate.toMap());
       } else {
-        // If candidate doc exists but has missing phone number and user has phone number, preserve it safely
-        final existingPhone = candidateDoc.data()?['phoneNumber'];
+        // If candidate doc exists but has missing phone number or names, update them safely
+        final data = candidateDoc.data()!;
+        final updates = <String, dynamic>{};
+        
+        final existingPhone = data['phoneNumber'];
         if ((existingPhone == null || (existingPhone is String && existingPhone.isEmpty)) &&
             user.phoneNumber != null &&
             user.phoneNumber!.isNotEmpty) {
-          await _firestore.collection('candidates').doc(user.uid).update({
-            'phoneNumber': user.phoneNumber,
-            'lastUpdated': DateTime.now().toIso8601String(),
-          });
+          updates['phoneNumber'] = user.phoneNumber;
+        }
+
+        if ((data['firstName'] == null || data['firstName'].toString().isEmpty) && uFName != null) {
+          updates['firstName'] = uFName;
+        }
+        if ((data['lastName'] == null || data['lastName'].toString().isEmpty) && uLName != null) {
+          updates['lastName'] = uLName;
+        }
+
+        if (updates.isNotEmpty) {
+          updates['lastUpdated'] = DateTime.now().toIso8601String();
+          await _firestore.collection('candidates').doc(user.uid).update(updates);
         }
       }
     } else {
@@ -95,6 +124,8 @@ class AuthRepository {
         uid: user.uid,
         email: user.email ?? '',
         phoneNumber: user.phoneNumber,
+        firstName: fName,
+        lastName: lName,
         createdAt: DateTime.now(),
         lastUpdated: DateTime.now(),
         isPremium: false,
@@ -112,6 +143,8 @@ class AuthRepository {
         'email': user.email ?? '',
         'createdAt': FieldValue.serverTimestamp(),
       };
+      if (fName != null) userData['firstName'] = fName;
+      if (lName != null) userData['lastName'] = lName;
       if (user.phoneNumber != null && user.phoneNumber!.isNotEmpty) {
         userData['phoneNumber'] = user.phoneNumber;
       }
@@ -142,6 +175,11 @@ class AuthRepository {
       UserCredential userCredential = await _auth
           .createUserWithEmailAndPassword(email: email, password: password);
 
+      final full = '${firstName ?? ''} ${lastName ?? ''}'.trim();
+      if (full.isNotEmpty && userCredential.user != null) {
+        await userCredential.user!.updateDisplayName(full);
+      }
+
       final candidate = CandidateModel(
         uid: userCredential.user!.uid,
         email: email,
@@ -163,6 +201,8 @@ class AuthRepository {
       await _firestore.collection('users').doc(userCredential.user!.uid).set({
         'role': 'candidate',
         'email': email,
+        'firstName': firstName,
+        'lastName': lastName,
         'createdAt': FieldValue.serverTimestamp(),
       });
     } catch (e) {
@@ -231,6 +271,30 @@ class AuthRepository {
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<void> sendEmailOtp(String email) async {
+    try {
+      final callable = _functions.httpsCallable('sendEmailOtp');
+      await callable.call({'email': email});
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? 'Failed to send OTP code');
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<bool> verifyEmailOtp(String email, String otp) async {
+    try {
+      final callable = _functions.httpsCallable('verifyEmailOtp');
+      final res = await callable.call({'email': email, 'otp': otp});
+      final data = res.data;
+      return data['verified'] == true;
+    } on FirebaseFunctionsException catch (e) {
+      throw Exception(e.message ?? 'Invalid OTP code');
     } catch (e) {
       rethrow;
     }

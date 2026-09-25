@@ -73,7 +73,61 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
   void _verifyOtp() {
     String otp = _controllers.map((e) => e.text).join();
     if (otp.length == 6) {
-      if (widget.verificationType == 'phone_link') {
+      if (widget.verificationType == 'email_register') {
+        final regData = widget.registrationData!;
+        final email = regData['email'] as String;
+        ref
+            .read(authControllerProvider.notifier)
+            .verifyEmailOtp(context, email, otp)
+            .then((verified) {
+          if (verified && mounted) {
+            final phoneNumber = regData['phoneNumber'] as String?;
+            if (phoneNumber != null && phoneNumber.trim().isNotEmpty) {
+              final formattedPhone = phoneNumber.startsWith('+')
+                  ? phoneNumber
+                  : '+91$phoneNumber';
+              ref.read(authControllerProvider.notifier).sendOtp(
+                context: context,
+                phoneNumber: formattedPhone,
+                onCodeSent: (vId) {
+                  if (mounted) {
+                    context.pushReplacement(
+                      '/otp-verification',
+                      extra: {
+                        'verificationId': vId,
+                        'phoneNumber': phoneNumber,
+                        'verificationType': 'register',
+                        'registrationData': regData,
+                      },
+                    );
+                  }
+                },
+                verificationCompleted: (credential) {
+                  ref.read(authControllerProvider.notifier).completeRegistration(
+                    context,
+                    email: regData['email'],
+                    password: regData['password'],
+                    firstName: regData['firstName'],
+                    lastName: regData['lastName'],
+                    phoneNumber: phoneNumber,
+                    credential: credential,
+                  );
+                },
+              );
+            } else {
+              ref.read(authControllerProvider.notifier).signUpWithEmail(
+                context,
+                email: regData['email'],
+                password: regData['password'],
+                firstName: regData['firstName'],
+                lastName: regData['lastName'],
+                phoneNumber: null,
+                shouldNavigate: true,
+              );
+            }
+          }
+        });
+      } else if (widget.verificationType == 'phone_link') {
         ref
             .read(authControllerProvider.notifier)
             .verifyUpdatePhoneOtp(context, widget.verificationId, otp)
@@ -113,7 +167,11 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
   }
 
   void _resendOtp() {
-    if (widget.verificationType == 'phone_link') {
+    if (widget.verificationType == 'email_register') {
+      final regData = widget.registrationData;
+      final email = regData?['email'] ?? widget.phoneNumber;
+      ref.read(authControllerProvider.notifier).sendEmailOtp(context, email);
+    } else if (widget.verificationType == 'phone_link') {
       ref
           .read(authControllerProvider.notifier)
           .sendUpdatePhoneOtp(
@@ -139,6 +197,8 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
     final backgroundColor = isDark ? Colors.black : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black;
     final borderColor = isDark ? Colors.grey[800]! : Colors.grey[300]!;
+
+    final isEmail = widget.verificationType == 'email_register';
 
     return Scaffold(
       backgroundColor: backgroundColor,
@@ -194,7 +254,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'VERIFY PHONE',
+                    isEmail ? 'VERIFY EMAIL' : 'VERIFY PHONE',
                     style: GoogleFonts.jost(
                       fontSize: 24,
                       fontWeight: FontWeight.w900,
