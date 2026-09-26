@@ -330,6 +330,14 @@ class _EditProfileBasicScreenState
       final currentCandidate = ref.read(candidateControllerProvider).value;
       if (currentCandidate == null) return;
 
+      final rawPhone = _phoneController.text.trim();
+      if (rawPhone.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Mobile number is required')),
+        );
+        return;
+      }
+
       if (_completePhoneNumber != currentCandidate.phoneNumber) {
         // Phone number changed, verify it first
         await _handlePhoneUpdate(_completePhoneNumber);
@@ -341,7 +349,15 @@ class _EditProfileBasicScreenState
   }
 
   Future<void> _handlePhoneUpdate(String newPhoneNumber) async {
-    final authController = ref.read(authControllerProvider.notifier);
+    final rawPhone = _phoneController.text.trim();
+    if (rawPhone.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Mobile number is required')),
+        );
+      }
+      return;
+    }
 
     // Ensure phone number has country code (it should from _completePhoneNumber)
     String formattedPhoneNumber = newPhoneNumber.replaceAll(RegExp(r'\s+'), '');
@@ -354,6 +370,19 @@ class _EditProfileBasicScreenState
         formattedPhoneNumber = '+91$formattedPhoneNumber';
       }
     }
+
+    // Check if the formatted number is just a country code (e.g. "+91") or lacks subscriber digits
+    final subscriberDigits = formattedPhoneNumber.replaceAll(RegExp(r'^\+\d{1,3}'), '');
+    if (subscriberDigits.isEmpty || subscriberDigits.length < 7) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a valid mobile number')),
+        );
+      }
+      return;
+    }
+
+    final authController = ref.read(authControllerProvider.notifier);
 
     // Send OTP
     await authController.sendUpdatePhoneOtpWithCallback(

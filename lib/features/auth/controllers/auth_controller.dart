@@ -120,6 +120,17 @@ class AuthController extends AsyncNotifier<void> {
     return false;
   }
 
+  String _getFriendlyPhoneAuthErrorMessage(FirebaseAuthException e) {
+    if (e.code == 'invalid-phone-number' ||
+        (e.message != null &&
+            (e.message!.contains('E.164') ||
+                e.message!.contains('invalid format') ||
+                e.message!.contains('format of the phone number')))) {
+      return 'Please enter a valid mobile number.';
+    }
+    return e.message ?? 'Verification Failed';
+  }
+
   Future<void> sendOtp({
     required BuildContext context,
     required String phoneNumber,
@@ -141,9 +152,12 @@ class AuthController extends AsyncNotifier<void> {
       },
       verificationFailed: (e) {
         state = AsyncValue.error(e, StackTrace.current);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Verification Failed: ${e.message}')),
-        );
+        if (context.mounted) {
+          final message = _getFriendlyPhoneAuthErrorMessage(e);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        }
       },
       codeAutoRetrievalTimeout: (verificationId) {},
     );
@@ -247,9 +261,12 @@ class AuthController extends AsyncNotifier<void> {
       },
       verificationFailed: (e) {
         state = AsyncValue.error(e, StackTrace.current);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Verification Failed: ${e.message}')),
-        );
+        if (context.mounted) {
+          final message = _getFriendlyPhoneAuthErrorMessage(e);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        }
       },
       codeAutoRetrievalTimeout: (verificationId) {},
     );
@@ -277,9 +294,12 @@ class AuthController extends AsyncNotifier<void> {
       },
       verificationFailed: (e) {
         state = AsyncValue.error(e, StackTrace.current);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Verification Failed: ${e.message}')),
-        );
+        if (context.mounted) {
+          final message = _getFriendlyPhoneAuthErrorMessage(e);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        }
       },
       codeAutoRetrievalTimeout: (verificationId) {},
     );
