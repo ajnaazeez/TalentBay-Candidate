@@ -62,6 +62,14 @@ class CandidateRepository {
     });
   }
 
+  Future<void> markSubscriptionExpired(String uid) async {
+    await _firestore.collection('candidates').doc(uid).update({
+      'isPremium': false,
+      'subscriptionStatus': 'expired',
+      'lastUpdated': DateTime.now().toIso8601String(),
+    });
+  }
+
   Future<void> updateCandidate(CandidateModel candidate) async {
     try {
       // Calculate profile completion percentage
@@ -73,10 +81,18 @@ class CandidateRepository {
         lastUpdated: DateTime.now(),
       );
 
+      final data = updatedCandidate.toMap();
+      // Subscription fields are written only by the payment backend.
+      data.remove('isPremium');
+      data.remove('subscriptionExpiryDate');
+      data.remove('subscriptionStatus');
+      data.remove('hasUsedTrial');
+      data.remove('appleSubscriptionId');
+
       await _firestore
           .collection('candidates')
           .doc(updatedCandidate.uid)
-          .update(updatedCandidate.toMap());
+          .update(data);
     } catch (e) {
       rethrow;
     }

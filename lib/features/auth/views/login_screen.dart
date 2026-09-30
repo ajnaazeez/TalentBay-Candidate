@@ -24,14 +24,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _isPhoneLogin = false;
   String _fullPhoneNumber = '';
 
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   void _login() {
     if (_isPhoneLogin) {
-      // Trigger OTP flow
       final phoneNumber = _phoneController.text.trim();
       if (phoneNumber.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Phone number is required.')),
-        );
+        _showMessage('Enter your mobile number to receive an OTP.');
         return;
       }
 
@@ -40,34 +43,51 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       );
 
       if (!PhoneUtils.isValidE164(formattedPhoneNumber)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please enter a valid phone number.')),
-        );
+        _showMessage('Please enter a valid mobile number, including the country code.');
         return;
       }
 
+      var loginFinished = false;
       ref
           .read(authControllerProvider.notifier)
           .sendOtp(
             context: context,
             phoneNumber: formattedPhoneNumber,
+            verificationCompleted: (credential) {
+              loginFinished = true;
+              ref
+                  .read(authControllerProvider.notifier)
+                  .completePhoneLogin(context, credential);
+            },
             onCodeSent: (verificationId) {
+              if (!mounted || loginFinished) return;
               context.push(
                 '/otp-verification',
                 extra: {
                   'verificationId': verificationId,
                   'phoneNumber': formattedPhoneNumber,
+                  'verificationType': 'login',
                 },
               );
             },
           );
     } else {
+      final email = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+      if (email.isEmpty || !email.contains('@')) {
+        _showMessage('Enter the email address you used to create your account.');
+        return;
+      }
+      if (password.isEmpty) {
+        _showMessage('Enter your password.');
+        return;
+      }
       ref
           .read(authControllerProvider.notifier)
           .signInWithEmail(
             context,
-            _emailController.text.trim(),
-            _passwordController.text.trim(),
+            email,
+            password,
           );
     }
   }

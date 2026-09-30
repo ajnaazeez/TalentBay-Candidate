@@ -41,4 +41,30 @@ class PhoneUtils {
     final digitsOnly = phone.substring(1).replaceAll(RegExp(r'\D'), '');
     return digitsOnly.length >= 8 && digitsOnly.length <= 15;
   }
+
+  /// Last 10 digits, used to match the same mobile stored in different formats.
+  static String? lastTenDigits(String? phone) {
+    if (phone == null) return null;
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return null;
+    if (digits.length <= 10) return digits;
+    return digits.substring(digits.length - 10);
+  }
+
+  /// Formats a number may have been stored as, so login can find the same account.
+  static List<String> lookupVariants(String phone) {
+    final normalized = normalizeE164(phone);
+    final digits = normalized.replaceAll(RegExp(r'\D'), '');
+    final last10 = lastTenDigits(normalized);
+    final variants = <String>{};
+    if (phone.trim().isNotEmpty) variants.add(phone.trim());
+    if (normalized.isNotEmpty) variants.add(normalized);
+    if (digits.isNotEmpty) variants.add(digits);
+    if (last10 != null && last10.isNotEmpty) {
+      variants.add(last10);
+      variants.add('+91$last10');
+      variants.add('91$last10');
+    }
+    return variants.where((value) => value.isNotEmpty).take(10).toList();
+  }
 }

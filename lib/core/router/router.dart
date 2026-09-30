@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/auth/controllers/auth_controller.dart';
@@ -14,16 +15,45 @@ import '../../features/jobs/views/job_details_screen.dart';
 import '../../features/home/views/invitations_screen.dart';
 import '../../features/notifications/views/notification_screen.dart';
 
-final routerProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authStateChangesProvider);
+class _RouterRefresh extends ChangeNotifier {
+  _RouterRefresh(Ref ref) {
+    _authSub = ref.listen(authStateChangesProvider, (_, _) {
+      notifyListeners();
+    });
+    _holdSub = ref.listen(authNavigationHoldProvider, (_, _) {
+      notifyListeners();
+    });
+  }
 
-  return GoRouter(
+  late final ProviderSubscription<AsyncValue<User?>> _authSub;
+  late final ProviderSubscription<bool> _holdSub;
+
+  @override
+  void dispose() {
+    _authSub.close();
+    _holdSub.close();
+    super.dispose();
+  }
+}
+
+final routerProvider = Provider<GoRouter>((ref) {
+  final refresh = _RouterRefresh(ref);
+  ref.onDispose(refresh.dispose);
+
+  final router = GoRouter(
     initialLocation: '/home',
+    refreshListenable: refresh,
     redirect: (context, state) {
+      if (ref.read(authNavigationHoldProvider)) {
+        return null;
+      }
+
+      final authState = ref.read(authStateChangesProvider);
       final isLoading = authState.isLoading;
       final hasError = authState.hasError;
       final currentUser = FirebaseAuth.instance.currentUser;
-      final isAuthenticated = authState.value != null || (currentUser != null && !hasError);
+      final isAuthenticated =
+          authState.value != null || (currentUser != null && !hasError);
 
       final isOtpVerification = state.uri.path == '/otp-verification';
       final isLoggingIn = state.uri.path == '/login';
@@ -63,7 +93,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/otp-verification',
         builder: (context, state) {
-          final extra = state.extra as Map<String, dynamic>;
+          final extraRaw = state.extra;
+          if (extraRaw is! Map) {
+            return const LoginScreen();
+          }
+          final extra = Map<String, dynamic>.from(extraRaw);
           return OtpVerificationScreen(
             verificationId: extra['verificationId'],
             phoneNumber: extra['phoneNumber'],
@@ -105,4 +139,6 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
     ],
   );
+  ref.onDispose(router.dispose);
+  return router;
 });

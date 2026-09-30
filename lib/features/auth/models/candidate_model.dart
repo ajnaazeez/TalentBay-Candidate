@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../core/utils/phone_utils.dart';
 import '../../candidate/models/profile_sections.dart';
 
 class CandidateModel {
@@ -115,6 +116,7 @@ class CandidateModel {
       'uid': uid,
       'email': email,
       'phoneNumber': phoneNumber,
+      'phoneDigits': PhoneUtils.lastTenDigits(phoneNumber),
       'firstName': firstName,
       'lastName': lastName,
       'photoUrl': photoUrl,

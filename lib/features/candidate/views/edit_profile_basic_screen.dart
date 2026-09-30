@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -330,15 +331,32 @@ class _EditProfileBasicScreenState
 
   bool _isVerifyingOtp = false;
 
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red[700] : null,
+      ),
+    );
+  }
+
   Future<void> _save() async {
     if (_formKey.currentState!.validate()) {
       final currentCandidate = ref.read(candidateControllerProvider).value;
-      if (currentCandidate == null) return;
+      if (currentCandidate == null) {
+        _showMessage(
+          'Your profile is still loading. Please wait a moment and try again.',
+          isError: true,
+        );
+        return;
+      }
 
       final rawPhone = _phoneController.text.trim();
       if (rawPhone.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Phone number is required.')),
+        _showMessage(
+          'Mobile number is mandatory. Add it so you can sign in with OTP.',
+          isError: true,
         );
         return;
       }
@@ -348,8 +366,9 @@ class _EditProfileBasicScreenState
       );
 
       if (!PhoneUtils.isValidE164(normalizedInputPhone)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please enter a valid phone number.')),
+        _showMessage(
+          'Please enter a valid mobile number. It is mandatory for your account.',
+          isError: true,
         );
         return;
       }
@@ -363,26 +382,32 @@ class _EditProfileBasicScreenState
         // No change in phone number, update profile
         await _updateProfile(existingCandidatePhone);
       }
+    } else {
+      final rawPhone = _phoneController.text.trim();
+      _showMessage(
+        rawPhone.isEmpty
+            ? 'Mobile number is mandatory. Add it so you can sign in with OTP.'
+            : 'Please enter a valid mobile number. It is mandatory for your account.',
+        isError: true,
+      );
     }
   }
 
   Future<void> _handlePhoneUpdate(String formattedPhoneNumber) async {
     final rawPhone = _phoneController.text.trim();
     if (rawPhone.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Phone number is required.')),
-        );
-      }
+      _showMessage(
+        'Mobile number is mandatory. Add it so you can sign in with OTP.',
+        isError: true,
+      );
       return;
     }
 
     if (!PhoneUtils.isValidE164(formattedPhoneNumber)) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please enter a valid phone number.')),
-        );
-      }
+      _showMessage(
+        'Please enter a valid mobile number. It is mandatory for your account.',
+        isError: true,
+      );
       return;
     }
 
@@ -402,18 +427,13 @@ class _EditProfileBasicScreenState
         if (_isVerifyingOtp) return;
         _isVerifyingOtp = true;
         try {
-          await ref.read(authRepositoryProvider).updatePhoneNumber(credential);
-          if (mounted) {
+          final saved = await _saveVerifiedPhone(credential, formattedPhoneNumber);
+          if (saved && mounted) {
             _completePhoneNumber = formattedPhoneNumber;
-            await _updateProfile(formattedPhoneNumber);
+            await _updateProfile(formattedPhoneNumber, phoneJustVerified: true);
           }
         } catch (e) {
-          if (mounted) {
-            final msg = FirebaseErrorHandler.getMessage(e);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(msg), backgroundColor: Colors.red[700]),
-            );
-          }
+          _showMessage(FirebaseErrorHandler.getMessage(e), isError: true);
         } finally {
           _isVerifyingOtp = false;
         }
@@ -525,27 +545,98 @@ class _EditProfileBasicScreenState
     );
   }
 
+  Future<bool> _saveVerifiedPhone(
+    PhoneAuthCredential credential,
+    String phoneNumber,
+  ) async {
+    final authRepo = ref.read(authRepositoryProvider);
+    var linkedOnAuth = false;
+    try {
+      await authRepo.updatePhoneNumber(credential);
+      linkedOnAuth = true;
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'provider-already-linked') {
+        linkedOnAuth = true;
+      } else if (e.code == 'credential-already-in-use' ||
+          e.code == 'phone-number-already-exists') {
+        try {
+          await authRepo.claimVerifiedPhone(phoneNumber);
+          linkedOnAuth = true;
+        } catch (claimError) {
+          _showMessage(
+            FirebaseErrorHandler.getMessage(claimError),
+            isError: true,
+          );
+          return false;
+        }
+      } else {
+        _showMessage(FirebaseErrorHandler.getMessage(e), isError: true);
+        return false;
+      }
+    } catch (e) {
+      _showMessage(FirebaseErrorHandler.getMessage(e), isError: true);
+      return false;
+    }
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      _showMessage(
+        'Your session expired before the number could be saved. Please sign in and try again.',
+        isError: true,
+      );
+      return false;
+    }
+
+    try {
+      if (!linkedOnAuth) {
+        await authRepo.claimVerifiedPhone(phoneNumber);
+      }
+      await authRepo.syncPhoneToAccount(uid: uid, phoneNumber: phoneNumber);
+    } catch (e) {
+      _showMessage(
+        'The code was correct, but the mobile number could not be saved. Please try again.',
+        isError: true,
+      );
+      return false;
+    }
+    return true;
+  }
+
   Future<void> _verifyOtp(String verificationId, String smsCode, String newPhoneNumber) async {
     if (_isVerifyingOtp) return;
+    if (smsCode.length != 6) {
+      _showMessage('Enter the 6-digit code sent to your mobile number.', isError: true);
+      return;
+    }
     _isVerifyingOtp = true;
     try {
-      final success = await ref
-          .read(authControllerProvider.notifier)
-          .verifyUpdatePhoneOtp(context, verificationId, smsCode);
-
-      if (success && mounted) {
-        Navigator.pop(context); // Close OTP dialog
+      final credential = PhoneAuthProvider.credential(
+        verificationId: verificationId,
+        smsCode: smsCode,
+      );
+      final saved = await _saveVerifiedPhone(credential, newPhoneNumber);
+      if (saved && mounted) {
+        Navigator.pop(context);
         _completePhoneNumber = newPhoneNumber;
-        await _updateProfile(newPhoneNumber); // Proceed to update profile with verified canonical E.164 number
+        await _updateProfile(newPhoneNumber, phoneJustVerified: true);
       }
     } finally {
       _isVerifyingOtp = false;
     }
   }
 
-  Future<void> _updateProfile([String? verifiedPhoneNumber]) async {
+  Future<void> _updateProfile(
+    String? verifiedPhoneNumber, {
+    bool phoneJustVerified = false,
+  }) async {
     final currentCandidate = ref.read(candidateControllerProvider).value;
-    if (currentCandidate == null) return;
+    if (currentCandidate == null) {
+      _showMessage(
+        'Your profile is still loading. Please wait a moment and try again.',
+        isError: true,
+      );
+      return;
+    }
 
     DateTime? parsedDob;
     if (_dobController.text.isNotEmpty) {
@@ -587,16 +678,38 @@ class _EditProfileBasicScreenState
       lastUpdated: DateTime.now(),
     );
 
-    await ref
-        .read(candidateControllerProvider.notifier)
-        .updateProfile(updatedCandidate);
+    if (finalPhone.isEmpty || !PhoneUtils.isValidE164(finalPhone)) {
+      _showMessage(
+        'Mobile number is mandatory. Add it before saving your profile.',
+        isError: true,
+      );
+      return;
+    }
+
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid != null) {
+        await ref.read(authRepositoryProvider).syncPhoneToAccount(
+              uid: uid,
+              phoneNumber: finalPhone,
+            );
+      }
+      await ref
+          .read(candidateControllerProvider.notifier)
+          .updateProfile(updatedCandidate);
+    } catch (e) {
+      _showMessage(FirebaseErrorHandler.getMessage(e), isError: true);
+      return;
+    }
 
     if (mounted) {
       if (context.canPop()) {
         context.pop();
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Phone number verified successfully.')),
+      _showMessage(
+        phoneJustVerified
+            ? 'Mobile number saved. You can now sign in with this number or your email.'
+            : 'Profile saved.',
       );
     }
   }
@@ -658,7 +771,10 @@ class _EditProfileBasicScreenState
                         IntlPhoneField(
                           controller: _phoneController,
                           decoration: InputDecoration(
-                            labelText: 'Phone Number',
+                            labelText: 'Mobile Number *',
+                            helperText:
+                                'Mandatory. This number is used to sign in with OTP.',
+                            helperMaxLines: 2,
                             labelStyle: TextStyle(
                               color: isDark
                                   ? AppColors.textSubDark

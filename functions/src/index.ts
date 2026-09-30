@@ -1213,7 +1213,7 @@ const SUBSCRIPTION_PLANS = [
  * Creates a server-side order with Razorpay.
  */
 export const createRazorpayOrder = onCall(
-  { region: "us-central1", secrets: ["RAZORPAY_KEY_SECRET"] },
+  { region: "us-central1" },
   async (request) => {
     // 1. Strict Authentication Check
     if (!request.auth || !request.auth.uid) {
@@ -1300,6 +1300,22 @@ export const createRazorpayOrder = onCall(
       };
 
       console.log(`[createRazorpayOrder] Created order ${orderData.id} for user ${uid}, amount ${orderData.amount} ${orderData.currency}`);
+
+      await db.collection("payment_transactions").doc(orderData.id).set({
+        orderId: orderData.id,
+        uid,
+        planId: plan.id,
+        planName: plan.name,
+        amountPaise: plan.amountPaise,
+        price: plan.price,
+        durationDays: plan.durationDays,
+        currency: orderData.currency || "INR",
+        receipt: orderData.receipt || receipt,
+        status: "created",
+        gateway: "razorpay",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
 
       return {
         orderId: orderData.id,
@@ -1729,6 +1745,606 @@ export const verifyEmailOtp = onCall(
   }
 );
 
+function razorpayAuthHeader(keyId: string, keySecret: string): string {
+  return "Basic " + Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+}
+
+function getRazorpayKeys(): { keyId: string; keySecret: string } {
+  const keyId = process.env.RAZORPAY_KEY_ID || "rzp_live_TdPCKnpedQNEW6";
+  const keySecret = process.env.RAZORPAY_KEY_SECRET || "";
+  if (!keySecret) {
+    throw new HttpsError("failed-precondition", "Payment gateway is not configured. Please try again later.");
+  }
+  return { keyId, keySecret };
+}
+
+async function razorpayRequest(
+  path: string,
+  method: "GET" | "POST",
+  body?: Record<string, unknown>
+): Promise<any> {
+  const { keyId, keySecret } = getRazorpayKeys();
+  const response = await fetch(`https://api.razorpay.com/v1/${path}`, {
+    method,
+    headers: {
+      Authorization: razorpayAuthHeader(keyId, keySecret),
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error(`[razorpayRequest] ${method} ${path} failed:`, response.status, errText);
+    throw new HttpsError("internal", "Could not confirm this payment with the payment gateway.");
+  }
+  return response.json();
+}
+
+async function activateCandidateSubscription(params: {
+  uid: string;
+  plan: (typeof SUBSCRIPTION_PLANS)[number];
+  payment: any;
+  orderId: string;
+  signature?: string | null;
+}): Promise<{ expiryDate: string; alreadyProcessed: boolean }> {
+  const { uid, plan, payment, orderId, signature } = params;
+  const paymentId = String(payment.id);
+  const paymentDocRef = db.collection("candidates").doc(uid).collection("payments").doc(paymentId);
+  const existingPayment = await paymentDocRef.get();
+  if (existingPayment.exists && existingPayment.data()?.status === "success") {
+    const existingExpiry = existingPayment.data()?.expiryDate;
+    let expiryDate = "";
+    if (existingExpiry?.toDate) {
+      expiryDate = existingExpiry.toDate().toISOString();
+    }
+    return { expiryDate, alreadyProcessed: true };
+  }
+
+  const now = new Date();
+  const expiryDate = new Date(now.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
+  const expiryTimestamp = admin.firestore.Timestamp.fromDate(expiryDate);
+  const serverTime = admin.firestore.FieldValue.serverTimestamp();
+  const batch = db.batch();
+
+  batch.set(
+    paymentDocRef,
+    {
+      paymentId,
+      orderId,
+      signature: signature || null,
+      planId: plan.id,
+      planName: plan.name,
+      amount: plan.price,
+      amountPaise: plan.amountPaise,
+      currency: "INR",
+      durationDays: plan.durationDays,
+      status: "success",
+      method: payment.method || "razorpay",
+      email: payment.email || null,
+      contact: payment.contact || null,
+      gatewayStatus: payment.status || "captured",
+      createdAt: serverTime,
+      verifiedAt: serverTime,
+      expiryDate: expiryTimestamp,
+    },
+    { merge: true }
+  );
+
+  const candidateUpdate: Record<string, unknown> = {
+    isPremium: true,
+    subscriptionStatus: "active",
+    subscriptionExpiryDate: expiryDate.toISOString(),
+    subscriptionPlanId: plan.id,
+    razorpaySubscriptionId: paymentId,
+    razorpayPaymentId: paymentId,
+    razorpayOrderId: orderId,
+    lastUpdated: now.toISOString(),
+  };
+  if (plan.id === "7_days_trial") {
+    candidateUpdate.hasUsedTrial = true;
+  }
+  batch.set(db.collection("candidates").doc(uid), candidateUpdate, { merge: true });
+  batch.set(
+    db.collection("users").doc(uid),
+    {
+      isPremium: true,
+      subscriptionPlanId: plan.id,
+      subscriptionExpiry: expiryTimestamp,
+      updatedAt: serverTime,
+    },
+    { merge: true }
+  );
+  batch.set(
+    db.collection("payment_transactions").doc(orderId),
+    {
+      status: "captured",
+      paymentId,
+      outcome: "subscribed",
+      uid,
+      planId: plan.id,
+      updatedAt: serverTime,
+      subscriptionExpiry: expiryTimestamp,
+    },
+    { merge: true }
+  );
+
+  await batch.commit();
+  return { expiryDate: expiryDate.toISOString(), alreadyProcessed: false };
+}
+
+async function markTransaction(
+  orderId: string,
+  patch: Record<string, unknown>
+): Promise<void> {
+  if (!orderId) return;
+  await db.collection("payment_transactions").doc(orderId).set(
+    {
+      ...patch,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+/**
+ * Backend is the source of truth. A Razorpay success callback is ignored until
+ * this function sees a captured payment for an order this user created.
+ */
+async function settleRazorpayOrder(params: {
+  uid: string;
+  orderId?: string;
+  paymentId?: string;
+  signature?: string;
+  clientPlanId?: string;
+}): Promise<Record<string, unknown>> {
+  let orderId = (params.orderId || "").trim();
+  const paymentId = (params.paymentId || "").trim();
+
+  const txSnap = orderId
+    ? await db.collection("payment_transactions").doc(orderId).get()
+    : null;
+  let tx = txSnap?.exists ? txSnap.data() || null : null;
+
+  if (tx && tx.uid && tx.uid !== params.uid) {
+    throw new HttpsError("permission-denied", "This payment does not belong to your account.");
+  }
+
+  let razorpayOrder: any = null;
+  if (orderId) {
+    try {
+      razorpayOrder = await razorpayRequest(`orders/${orderId}`, "GET");
+    } catch (err) {
+      if (!tx) throw err;
+      console.warn("[settleRazorpayOrder] Order fetch failed, using stored transaction:", err);
+    }
+  }
+
+  const notesUid = razorpayOrder?.notes?.uid || tx?.uid;
+  if (notesUid && notesUid !== params.uid) {
+    throw new HttpsError("permission-denied", "This payment does not belong to your account.");
+  }
+
+  const planId = (tx?.planId || razorpayOrder?.notes?.planId || params.clientPlanId || "").toString();
+  const plan = SUBSCRIPTION_PLANS.find((item) => item.id === planId);
+  if (!plan) {
+    throw new HttpsError("not-found", "We could not match this payment to a subscription plan.");
+  }
+
+  if (params.signature && orderId && paymentId) {
+    const { keySecret } = getRazorpayKeys();
+    const generatedSignature = crypto
+      .createHmac("sha256", keySecret)
+      .update(`${orderId}|${paymentId}`)
+      .digest("hex");
+    if (generatedSignature !== params.signature) {
+      throw new HttpsError("invalid-argument", "Payment signature verification failed.");
+    }
+  }
+
+  let payments: any[] = [];
+  if (orderId) {
+    const listed = await razorpayRequest(`orders/${orderId}/payments`, "GET");
+    payments = Array.isArray(listed?.items) ? listed.items : [];
+  }
+  if (paymentId && !payments.some((item) => item.id === paymentId)) {
+    try {
+      const single = await razorpayRequest(`payments/${paymentId}`, "GET");
+      if (single) payments.push(single);
+      if (!orderId && single?.order_id) orderId = String(single.order_id);
+    } catch (err) {
+      console.warn("[settleRazorpayOrder] Could not fetch payment id:", err);
+    }
+  }
+
+  const captured = payments.find((item) => item.status === "captured");
+  const authorized = payments.find((item) => item.status === "authorized");
+  const refunded = payments.find((item) => item.status === "refunded");
+  let payment = captured || authorized || null;
+
+  if (payment && payment.status === "authorized") {
+    try {
+      payment = await razorpayRequest(`payments/${payment.id}/capture`, "POST", {
+        amount: plan.amountPaise,
+        currency: "INR",
+      });
+    } catch (captureErr) {
+      console.error("[settleRazorpayOrder] Capture failed:", captureErr);
+      await markTransaction(orderId, {
+        status: "authorized",
+        paymentId: payment.id,
+        outcome: "refund_pending",
+        uid: params.uid,
+        planId: plan.id,
+      });
+      return {
+        success: false,
+        verified: false,
+        subscriptionActive: false,
+        outcome: "refund_pending",
+        orderId,
+        paymentId: payment.id,
+        message:
+          `Payment ${payment.id} was authorized but could not be completed. ` +
+          "If the amount was deducted, a refund will be issued within 5–7 working days.",
+      };
+    }
+  }
+
+  if (!payment || payment.status !== "captured") {
+    const failed = payments.length > 0 && payments.every((item) => item.status === "failed");
+    if (refunded && !captured) {
+      await markTransaction(orderId, {
+        status: "refunded",
+        outcome: "failed",
+        uid: params.uid,
+        planId: plan.id,
+        paymentId: refunded.id,
+      });
+      return {
+        success: false,
+        verified: false,
+        subscriptionActive: false,
+        outcome: "failed",
+        orderId,
+        paymentId: refunded.id,
+        message: `Payment ${refunded.id} was refunded. Your subscription was not charged.`,
+      };
+    }
+    await markTransaction(orderId, {
+      status: failed ? "failed" : payments.length === 0 ? "created" : "pending",
+      outcome: payments.length === 0 || failed ? "failed" : "pending",
+      uid: params.uid,
+      planId: plan.id,
+      paymentId: payments[0]?.id || null,
+    });
+    if (payments.length === 0 || failed) {
+      return {
+        success: false,
+        verified: false,
+        subscriptionActive: false,
+        outcome: "failed",
+        orderId,
+        paymentId: payments[0]?.id || null,
+        message: failed
+          ? "Payment failed. No subscription was activated. If any amount was deducted, the bank reverses it automatically."
+          : "Payment was not completed. You have not been charged.",
+      };
+    }
+    return {
+      success: false,
+      verified: false,
+      subscriptionActive: false,
+      outcome: "pending",
+      orderId,
+      paymentId: payments[0]?.id || null,
+      message:
+        "Your payment is still processing. We will activate the subscription when the bank confirms it. You will not be charged twice.",
+    };
+  }
+
+  if (payment.currency !== "INR" || Number(payment.amount) !== plan.amountPaise) {
+    await markTransaction(orderId, {
+      status: "captured",
+      outcome: "refund_pending",
+      paymentId: payment.id,
+      uid: params.uid,
+      planId: plan.id,
+      gatewayAmount: payment.amount,
+    });
+    return {
+      success: false,
+      verified: false,
+      subscriptionActive: false,
+      outcome: "refund_pending",
+      orderId,
+      paymentId: payment.id,
+      message:
+        `We received payment ${payment.id}, but the amount does not match this plan. ` +
+        "The subscription was not activated. A refund will be issued within 5–7 working days.",
+    };
+  }
+
+  if (payment.order_id && orderId && payment.order_id !== orderId) {
+    throw new HttpsError("invalid-argument", "Payment does not match this order.");
+  }
+
+  try {
+    const activated = await activateCandidateSubscription({
+      uid: params.uid,
+      plan,
+      payment,
+      orderId: orderId || payment.order_id,
+      signature: params.signature || null,
+    });
+    return {
+      success: true,
+      verified: true,
+      subscriptionActive: true,
+      outcome: activated.alreadyProcessed ? "already_subscribed" : "subscribed",
+      orderId: orderId || payment.order_id,
+      paymentId: payment.id,
+      planId: plan.id,
+      expiryDate: activated.expiryDate,
+      message: activated.alreadyProcessed
+        ? "This payment is already applied. Your subscription is active."
+        : "Payment confirmed. Your subscription is active.",
+    };
+  } catch (activationErr) {
+    console.error("[settleRazorpayOrder] Activation failed after capture:", activationErr);
+    await markTransaction(orderId || payment.order_id, {
+      status: "captured",
+      outcome: "refund_pending",
+      paymentId: payment.id,
+      uid: params.uid,
+      planId: plan.id,
+    });
+    return {
+      success: false,
+      verified: false,
+      subscriptionActive: false,
+      outcome: "refund_pending",
+      orderId: orderId || payment.order_id,
+      paymentId: payment.id,
+      message:
+        `Payment ${payment.id} was received, but the subscription could not be activated. ` +
+        "A refund will be issued within 5–7 working days if it stays inactive. Keep this transaction ID.",
+    };
+  }
+}
+
+export const confirmRazorpayPayment = onCall(
+  { region: "us-central1", secrets: ["RAZORPAY_KEY_SECRET"] },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "You must be signed in to confirm a payment.");
+    }
+    const data = request.data as {
+      orderId?: string;
+      paymentId?: string;
+      signature?: string;
+      planId?: string;
+    };
+    if (!data?.orderId && !data?.paymentId) {
+      throw new HttpsError("invalid-argument", "A payment or order ID is required.");
+    }
+    return settleRazorpayOrder({
+      uid: request.auth.uid,
+      orderId: data.orderId,
+      paymentId: data.paymentId,
+      signature: data.signature,
+      clientPlanId: data.planId,
+    });
+  }
+);
+
+export const reconcileMyPayments = onCall(
+  { region: "us-central1", secrets: ["RAZORPAY_KEY_SECRET"] },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "You must be signed in.");
+    }
+    const uid = request.auth.uid;
+    const snap = await db.collection("payment_transactions").where("uid", "==", uid).limit(15).get();
+    let subscriptionActivated = false;
+    let needsAttention = false;
+    let message = "";
+
+    for (const doc of snap.docs) {
+      const status = doc.data().status;
+      const outcome = doc.data().outcome;
+      if (status === "captured" && outcome === "subscribed") continue;
+      if (status === "failed" || status === "refunded") continue;
+      try {
+        const result = await settleRazorpayOrder({
+          uid,
+          orderId: doc.id,
+          clientPlanId: doc.data().planId,
+        });
+        if (result.subscriptionActive === true) {
+          subscriptionActivated = true;
+          message = String(result.message || "");
+        } else if (result.outcome === "refund_pending" || result.outcome === "pending") {
+          needsAttention = true;
+          message = String(result.message || message);
+        }
+      } catch (err) {
+        console.warn(`[reconcileMyPayments] Could not settle ${doc.id}:`, err);
+      }
+    }
+
+    return {
+      success: true,
+      subscriptionActivated,
+      needsAttention,
+      message,
+    };
+  }
+);
+
+function normalizeStoredPhone(phone: string): string {
+  const trimmed = (phone || "").trim();
+  if (!trimmed) return "";
+  let cleaned = trimmed.replace(/[\s\-()]/g, "");
+  if (cleaned.startsWith("+")) {
+    const digits = cleaned.slice(1).replace(/\D/g, "");
+    return digits ? `+${digits}` : "";
+  }
+  cleaned = cleaned.replace(/\D/g, "");
+  if (!cleaned) return "";
+  if (cleaned.length === 10) return `+91${cleaned}`;
+  if (cleaned.length === 11 && cleaned.startsWith("0")) return `+91${cleaned.slice(1)}`;
+  if (cleaned.length === 12 && cleaned.startsWith("91")) return `+${cleaned}`;
+  return cleaned.startsWith("+") ? cleaned : `+${cleaned}`;
+}
+
+function phoneLookupVariants(phone: string): string[] {
+  const normalized = normalizeStoredPhone(phone);
+  const digits = normalized.replace(/\D/g, "");
+  const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
+  const variants = new Set<string>();
+  if (phone.trim()) variants.add(phone.trim());
+  if (normalized) variants.add(normalized);
+  if (digits) variants.add(digits);
+  if (last10) {
+    variants.add(last10);
+    variants.add(`+91${last10}`);
+    variants.add(`91${last10}`);
+  }
+  return Array.from(variants).filter(Boolean).slice(0, 10);
+}
+
+async function authUserHasEmail(uid: string): Promise<boolean> {
+  try {
+    const user = await admin.auth().getUser(uid);
+    if (user.email) return true;
+    return (user.providerData || []).some(
+      (provider) => provider.providerId === "password" || provider.providerId === "google.com"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function isDisposablePhoneUser(uid: string): Promise<boolean> {
+  try {
+    const user = await admin.auth().getUser(uid);
+    if (user.email) return false;
+    const providers = (user.providerData || []).map((provider) => provider.providerId);
+    if (providers.some((provider) => provider !== "phone")) return false;
+    return providers.length === 0 || providers.every((provider) => provider === "phone");
+  } catch (err: any) {
+    return err?.code === "auth/user-not-found";
+  }
+}
+
+async function findCandidateIdsForPhone(phoneNumber: string): Promise<string[]> {
+  const variants = phoneLookupVariants(phoneNumber);
+  const ids = new Set<string>();
+  if (variants.length > 0) {
+    const [byPhone, byUserPhone, byDigits] = await Promise.all([
+      db.collection("candidates").where("phoneNumber", "in", variants).limit(10).get(),
+      db.collection("users").where("phoneNumber", "in", variants).limit(10).get(),
+      phoneNumber.replace(/\D/g, "").length >= 10
+        ? db
+            .collection("candidates")
+            .where("phoneDigits", "==", phoneNumber.replace(/\D/g, "").slice(-10))
+            .limit(10)
+            .get()
+            .catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    byPhone.docs.forEach((doc) => ids.add(doc.id));
+    byUserPhone.docs.forEach((doc) => ids.add(doc.id));
+    byDigits?.docs.forEach((doc) => ids.add(doc.id));
+  }
+  try {
+    const authUser = await admin.auth().getUserByPhoneNumber(normalizeStoredPhone(phoneNumber));
+    ids.add(authUser.uid);
+  } catch {
+    // Number is not linked on an auth user yet.
+  }
+  return Array.from(ids);
+}
+
+async function choosePrimaryCandidate(ids: string[]): Promise<string | null> {
+  const registered: string[] = [];
+  for (const id of ids) {
+    // A phone-only Firebase user is created just by requesting an OTP.
+    // That is not an account. Only an email (or Google) account can sign in.
+    if (await authUserHasEmail(id)) registered.push(id);
+  }
+  if (registered.length === 0) return null;
+  if (registered.length === 1) return registered[0];
+  throw new HttpsError(
+    "already-exists",
+    "More than one account uses this mobile number. Sign in with your email and password."
+  );
+}
+
+export const syncVerifiedPhone = onCall(
+  { region: "us-central1" },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "You must be signed in to save a mobile number.");
+    }
+    const uid = request.auth.uid;
+    const phoneNumber = normalizeStoredPhone((request.data?.phoneNumber || "").toString());
+    if (!phoneNumber || phoneNumber.replace(/\D/g, "").length < 8) {
+      throw new HttpsError("invalid-argument", "Enter a valid mobile number.");
+    }
+
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (userDoc.exists && userDoc.data()?.role && userDoc.data()?.role !== "candidate") {
+      throw new HttpsError("permission-denied", "Only a candidate account can save this mobile number.");
+    }
+
+    const matches = await findCandidateIdsForPhone(phoneNumber);
+    const otherRealAccounts: string[] = [];
+    for (const id of matches) {
+      if (id === uid) continue;
+      if (await authUserHasEmail(id)) otherRealAccounts.push(id);
+    }
+    if (otherRealAccounts.length > 0) {
+      throw new HttpsError(
+        "already-exists",
+        "This mobile number is already registered to another account. Sign in with that account, or use a different number."
+      );
+    }
+
+    let phoneOwner: admin.auth.UserRecord | null = null;
+    try {
+      phoneOwner = await admin.auth().getUserByPhoneNumber(phoneNumber);
+    } catch {
+      phoneOwner = null;
+    }
+
+    if (phoneOwner && phoneOwner.uid !== uid) {
+      if (!(await isDisposablePhoneUser(phoneOwner.uid))) {
+        throw new HttpsError(
+          "already-exists",
+          "This mobile number is already registered to another account."
+        );
+      }
+    } else {
+      try {
+        await admin.auth().updateUser(uid, { phoneNumber });
+      } catch (err: any) {
+        console.error("[syncVerifiedPhone] Could not attach phone to auth user:", err);
+        throw new HttpsError(
+          "failed-precondition",
+          "The code was verified, but this number could not be attached. Please try again."
+        );
+      }
+    }
+
+    const digits = phoneNumber.replace(/\D/g, "").slice(-10);
+    const payload = { phoneNumber, phoneDigits: digits };
+    await db.collection("candidates").doc(uid).set(payload, { merge: true });
+    await db.collection("users").doc(uid).set(payload, { merge: true });
+    return { success: true, phoneNumber };
+  }
+);
+
 export const loginWithPhoneOtp = onCall(
   { region: "us-central1" },
   async (request) => {
@@ -1749,75 +2365,54 @@ export const loginWithPhoneOtp = onCall(
         throw new HttpsError("invalid-argument", "ID token does not contain a verified phone number.");
       }
 
-      console.log(`[loginWithPhoneOtp] Verified phone number: ${phoneNumber} for temp UID: ${tempUid}`);
+      const normalizedPhone = normalizeStoredPhone(phoneNumber);
+      console.log(`[loginWithPhoneOtp] Verified phone number: ${normalizedPhone} for session UID: ${tempUid}`);
 
-      // 2. Find primary user account by phone number via Admin SDK or Firestore mapping
-      let primaryUid: string | null = null;
+      const matches = await findCandidateIdsForPhone(normalizedPhone);
+      const primaryUid = await choosePrimaryCandidate(matches);
 
-      // First check candidates collection for existing verified profile with this phone number
-      const candidateSnapshot = await db
-        .collection("candidates")
-        .where("phoneNumber", "==", phoneNumber)
-        .limit(2)
-        .get();
-
-      if (!candidateSnapshot.empty) {
-        if (candidateSnapshot.docs.length > 1) {
-          throw new HttpsError(
-            "already-exists",
-            "Multiple candidate accounts found for this phone number. Please log in using Email and Password."
-          );
-        }
-        primaryUid = candidateSnapshot.docs[0].id;
-      } else {
-        // Fallback check: query Firebase Auth by phone number
-        try {
-          const authUser = await admin.auth().getUserByPhoneNumber(phoneNumber);
-          if (authUser && authUser.uid !== tempUid) {
-            primaryUid = authUser.uid;
-          }
-        } catch (_) {}
-      }
-
-      if (!primaryUid) {
-        // Safe cleanup of temporary user if created during this attempt
-        if (tempUid) {
-          await admin.auth().deleteUser(tempUid).catch(() => {});
-        }
+      const phoneOnlySession =
+        !primaryUid || (primaryUid === tempUid && !(await authUserHasEmail(tempUid)));
+      if (phoneOnlySession) {
         throw new HttpsError(
           "not-found",
-          "No registered candidate account found for this phone number. Please register first."
+          "No account uses this mobile number yet. Create an account with email, then add this number in Edit Profile."
         );
       }
 
-      // If phone lookup matched the exact temp UID, check if temp UID actually has email or candidate doc
-      if (primaryUid === tempUid) {
-        const candidateDoc = await db.collection("candidates").doc(tempUid).get();
-        if (!candidateDoc.exists) {
-          // It's a raw un-linked Phone Auth user created in this session without profile
-          await admin.auth().deleteUser(tempUid).catch(() => {});
-          throw new HttpsError(
-            "not-found",
-            "No registered candidate account found for this phone number. Please register first."
-          );
-        }
-      } else {
-        // Safely cleanup temporary phone auth user created in this session to prevent orphan user
-        await admin.auth().deleteUser(tempUid).catch((err) => {
-          console.warn(`[loginWithPhoneOtp] Non-fatal temp user cleanup warning: ${err.message}`);
-        });
+      const userDoc = await db.collection("users").doc(primaryUid).get();
+      const candidateDoc = await db.collection("candidates").doc(primaryUid).get();
+      const role = userDoc.data()?.role;
+      if (role && role !== "candidate" && !candidateDoc.exists) {
+        throw new HttpsError(
+          "permission-denied",
+          "This mobile number belongs to an account that cannot be used in the candidate app."
+        );
       }
 
-      // 3. Generate a secure Firebase Custom Auth Token for the primary candidate UID
+      const digits = normalizedPhone.replace(/\D/g, "").slice(-10);
+      if (candidateDoc.exists) {
+        await candidateDoc.ref.set(
+          { phoneNumber: normalizedPhone, phoneDigits: digits },
+          { merge: true }
+        );
+      }
+      if (userDoc.exists) {
+        await userDoc.ref.set(
+          { phoneNumber: normalizedPhone, phoneDigits: digits },
+          { merge: true }
+        );
+      }
+
       const customToken = await admin.auth().createCustomToken(primaryUid, {
         loginProvider: "phone_otp",
       });
 
-      console.log(`[loginWithPhoneOtp] Successfully generated custom token for primary UID: ${primaryUid}`);
+      console.log(`[loginWithPhoneOtp] Custom token issued for ${primaryUid}`);
 
       return {
         success: true,
-        customToken: customToken,
+        customToken,
         uid: primaryUid,
       };
     } catch (error: any) {

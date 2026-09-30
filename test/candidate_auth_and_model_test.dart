@@ -252,6 +252,14 @@ void main() {
       expect(PhoneUtils.normalizeE164(''), equals(''));
     });
 
+    test('Builds lookup variants so email accounts can be found by mobile login', () {
+      final variants = PhoneUtils.lookupVariants('9876543210');
+      expect(variants, contains('+919876543210'));
+      expect(variants, contains('9876543210'));
+      expect(PhoneUtils.lastTenDigits('+91 98765-43210'), equals('9876543210'));
+      expect(PhoneUtils.lastTenDigits(null), isNull);
+    });
+
     test('Validates E.164 phone numbers correctly', () {
       expect(PhoneUtils.isValidE164('+919876543210'), isTrue);
       expect(PhoneUtils.isValidE164('+14155552671'), isTrue);

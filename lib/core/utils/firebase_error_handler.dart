@@ -3,48 +3,22 @@ import 'package:cloud_functions/cloud_functions.dart';
 
 class FirebaseErrorHandler {
   static String getMessage(Object error) {
-    if (error is FirebaseFunctionsException) {
-      return error.message ?? 'An error occurred while communicating with the AI service.';
-    } else if (error is FirebaseAuthException) {
-      switch (error.code) {
-        case 'user-not-found':
-          return 'No user found with this email or phone number.';
-        case 'wrong-password':
-          return 'Incorrect password. Please try again.';
-        case 'email-already-in-use':
-          return 'An account already exists with this email.';
-        case 'invalid-email':
-          return 'Please enter a valid email address.';
-        case 'user-disabled':
-          return 'This user account has been disabled.';
-        case 'operation-not-allowed':
-          return 'This operation is not allowed.';
-        case 'too-many-requests':
-          return 'Too many requests. Please try again later.';
-        case 'credential-already-in-use':
-        case 'phone-number-already-exists':
-          return 'This phone number is already registered to another account.';
-        case 'invalid-phone-number':
-          return 'Please enter a valid phone number.';
-        case 'invalid-credential':
-          return 'Invalid credential. Please try again.';
-        case 'invalid-verification-code':
-          return 'Invalid verification code. Please check and try again.';
-        case 'invalid-verification-id':
-          return 'Invalid verification ID. Please request a new code.';
-        case 'network-request-failed':
-          return 'Network error. Please check your connection.';
-        case 'weak-password':
-          return 'The password provided is too weak.';
-        default:
-          return 'Authentication error: ${error.message ?? "Unknown error"}';
-      }
+    if (error is FirebaseFunctionsException || error is FirebaseAuthException) {
+      final code = error is FirebaseFunctionsException
+          ? error.code
+          : (error as FirebaseAuthException).code;
+      final serverMessage = error is FirebaseFunctionsException
+          ? error.message
+          : (error as FirebaseAuthException).message;
+      return _authStyleMessage(code, serverMessage);
     } else if (error is FirebaseException) {
       switch (error.code) {
         case 'permission-denied':
           return 'You do not have permission to perform this action.';
         case 'unavailable':
           return 'Service is currently unavailable. Please try again later.';
+        case 'not-found':
+          return 'The record could not be found. Please try again.';
         case 'too-many-attempts':
           return 'Too many attempts. Please try again later.';
         case 'app-not-authorized':
@@ -53,10 +27,89 @@ class FirebaseErrorHandler {
           if (error.message?.contains('App attestation failed') ?? false) {
             return 'App Check attestation failed. Please check your configuration.';
           }
-          return 'Firebase error: ${error.message ?? "Unknown error"}';
+          final message = error.message?.trim();
+          if (message != null && message.isNotEmpty) return message;
+          return 'Something went wrong. Please try again.';
       }
     }
 
-    return error.toString().replaceAll('Exception:', '').trim();
+    var message = error.toString().trim();
+    if (message.startsWith('Exception:')) {
+      message = message.replaceFirst('Exception:', '').trim();
+    }
+    if (message.startsWith('FirebaseFunctionsException') ||
+        message.startsWith('FirebaseAuthException')) {
+      return 'Something went wrong. Please try again.';
+    }
+    return message.isEmpty ? 'Something went wrong. Please try again.' : message;
+  }
+
+  static String _authStyleMessage(String code, String? serverMessage) {
+    final friendlyServer = serverMessage?.trim();
+    switch (code) {
+      case 'user-not-found':
+      case 'not-found':
+        return friendlyServer?.isNotEmpty == true
+            ? friendlyServer!
+            : 'No account found for this email or mobile number.';
+      case 'wrong-password':
+      case 'invalid-credential':
+        return friendlyServer?.isNotEmpty == true &&
+                !friendlyServer!.toLowerCase().contains('credential')
+            ? friendlyServer
+            : 'Incorrect email or password. Please try again.';
+      case 'email-already-in-use':
+      case 'already-exists':
+        return friendlyServer?.isNotEmpty == true
+            ? friendlyServer!
+            : 'An account already exists with this email or mobile number.';
+      case 'invalid-email':
+        return 'Please enter a valid email address.';
+      case 'invalid-argument':
+        return friendlyServer?.isNotEmpty == true
+            ? friendlyServer!
+            : 'Please check the details and try again.';
+      case 'user-disabled':
+        return 'This account has been disabled. Contact support if this is unexpected.';
+      case 'operation-not-allowed':
+        return 'This sign-in method is not available right now.';
+      case 'too-many-requests':
+      case 'resource-exhausted':
+        return friendlyServer?.isNotEmpty == true
+            ? friendlyServer!
+            : 'Too many attempts. Please wait a few minutes and try again.';
+      case 'credential-already-in-use':
+      case 'phone-number-already-exists':
+        return 'This mobile number is already registered to another account.';
+      case 'invalid-phone-number':
+        return 'Please enter a valid mobile number.';
+      case 'invalid-verification-code':
+        return 'That code is incorrect. Please check it and try again.';
+      case 'invalid-verification-id':
+      case 'session-expired':
+        return 'This code has expired. Please request a new one.';
+      case 'network-request-failed':
+      case 'unavailable':
+        return 'Network error. Check your connection and try again.';
+      case 'weak-password':
+        return 'Password is too weak. Use at least 6 characters.';
+      case 'wrong-role':
+        return 'This account cannot be used in the candidate app.';
+      case 'requires-recent-login':
+        return 'For your security, sign out, sign in again, then update your mobile number.';
+      case 'internal':
+      case 'deadline-exceeded':
+      case 'failed-precondition':
+      case 'permission-denied':
+      case 'unauthenticated':
+        return friendlyServer?.isNotEmpty == true
+            ? friendlyServer!
+            : 'Something went wrong. Please try again.';
+      default:
+        if (friendlyServer != null && friendlyServer.isNotEmpty) {
+          return friendlyServer;
+        }
+        return 'Something went wrong. Please try again.';
+    }
   }
 }

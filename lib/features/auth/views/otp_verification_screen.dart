@@ -148,10 +148,9 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
         ref
             .read(authControllerProvider.notifier)
             .verifyUpdatePhoneOtp(context, widget.verificationId, otp)
-            .then((_) {
-              if (mounted) {
-                context.go('/home');
-              }
+            .then((saved) {
+              if (!mounted || !saved) return;
+              context.go('/home');
             }).whenComplete(() {
               if (mounted) setState(() => _isProcessing = false);
             });
@@ -203,9 +202,17 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
             phoneNumber: widget.phoneNumber,
           );
     } else {
-      ref
-          .read(authControllerProvider.notifier)
-          .sendOtp(context: context, phoneNumber: widget.phoneNumber);
+      ref.read(authControllerProvider.notifier).sendOtp(
+            context: context,
+            phoneNumber: widget.phoneNumber,
+            verificationCompleted: (credential) {
+              if (widget.verificationType == 'login') {
+                ref
+                    .read(authControllerProvider.notifier)
+                    .completePhoneLogin(context, credential);
+              }
+            },
+          );
     }
     setState(() {
       _start = 60;

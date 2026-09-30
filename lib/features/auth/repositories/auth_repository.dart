@@ -218,6 +218,68 @@ class AuthRepository {
     return userCredential;
   }
 
+  /// Signs in with the SMS credential only. Profile linking is handled afterwards
+  /// by [loginWithPhoneOtp], which maps the number back to the real account.
+  Future<UserCredential> signInWithPhoneCredential(
+    PhoneAuthCredential credential,
+  ) {
+    return _auth.signInWithCredential(credential);
+  }
+
+  Future<Map<String, dynamic>> loginWithPhoneOtp(String idToken) async {
+    try {
+      final callable = _functions.httpsCallable('loginWithPhoneOtp');
+      final res = await callable.call({'idToken': idToken});
+      final data = res.data;
+      if (data is Map) {
+        return Map<String, dynamic>.from(data);
+      }
+      throw Exception('Unexpected response while signing in with mobile number.');
+    } on FirebaseFunctionsException catch (e) {
+      throw FirebaseAuthException(
+        code: e.code,
+        message: e.message ?? 'Could not sign in with this mobile number.',
+      );
+    }
+  }
+
+  Future<void> syncPhoneToAccount({
+    required String uid,
+    required String phoneNumber,
+  }) async {
+    final normalized = PhoneUtils.normalizeE164(phoneNumber);
+    if (!PhoneUtils.isValidE164(normalized)) {
+      throw Exception('Please enter a valid mobile number.');
+    }
+    final digits = PhoneUtils.lastTenDigits(normalized);
+    final payload = <String, dynamic>{
+      'phoneNumber': normalized,
+      'phoneDigits': digits,
+    };
+
+    await _firestore.collection('candidates').doc(uid).set(
+          payload,
+          SetOptions(merge: true),
+        );
+    await _firestore.collection('users').doc(uid).set(
+          payload,
+          SetOptions(merge: true),
+        );
+  }
+
+  /// Saves a verified mobile number and rejects numbers owned by another real account.
+  Future<void> claimVerifiedPhone(String phoneNumber) async {
+    try {
+      final callable = _functions.httpsCallable('syncVerifiedPhone');
+      await callable.call({'phoneNumber': phoneNumber});
+    } on FirebaseFunctionsException catch (e) {
+      throw FirebaseAuthException(
+        code: e.code,
+        message: e.message ?? 'Could not save this mobile number.',
+      );
+    }
+  }
+
   Future<void> signUpWithEmail({
     required String email,
     required String password,
@@ -252,13 +314,22 @@ class AuthRepository {
           .doc(userCredential.user!.uid)
           .set(candidate.toMap());
 
-      await _firestore.collection('users').doc(userCredential.user!.uid).set({
+      final userData = <String, dynamic>{
         'role': 'candidate',
         'email': email,
         'firstName': firstName,
         'lastName': lastName,
         'createdAt': FieldValue.serverTimestamp(),
-      });
+      };
+      if (phoneNumber != null && phoneNumber.trim().isNotEmpty) {
+        final normalizedPhone = PhoneUtils.normalizeE164(phoneNumber);
+        userData['phoneNumber'] = normalizedPhone;
+        userData['phoneDigits'] = PhoneUtils.lastTenDigits(normalizedPhone);
+      }
+
+      await _firestore.collection('users').doc(userCredential.user!.uid).set(
+            userData,
+          );
     } catch (e) {
       rethrow;
     }
@@ -299,8 +370,6 @@ class AuthRepository {
       verificationCompleted: (PhoneAuthCredential credential) async {
         if (verificationCompleted != null) {
           verificationCompleted(credential);
-        } else {
-          await _auth.signInWithCredential(credential);
         }
       },
       verificationFailed: verificationFailed,

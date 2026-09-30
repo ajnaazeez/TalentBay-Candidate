@@ -67,9 +67,21 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
     final rawPhone = _phoneController.text.trim();
     final candidatePhone = _fullPhoneNumber.isNotEmpty ? _fullPhoneNumber : rawPhone;
-    final String? normalizedPhone = candidatePhone.isNotEmpty
-        ? PhoneUtils.normalizeE164(candidatePhone)
-        : null;
+    String? normalizedPhone;
+    if (candidatePhone.isNotEmpty) {
+      normalizedPhone = PhoneUtils.normalizeE164(candidatePhone);
+      if (!PhoneUtils.isValidE164(normalizedPhone)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Mobile number looks incomplete. Enter a valid number, or leave it empty and add it later from your profile.',
+            ),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+        return;
+      }
+    }
 
     // Send Email OTP first for email verification
     final sent = await ref

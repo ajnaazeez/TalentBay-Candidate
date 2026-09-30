@@ -22,6 +22,7 @@ class SubscriptionPromptDialog extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isLoading = ref.watch(subscriptionControllerProvider);
+    final paymentNotice = ref.watch(paymentNoticeProvider);
     final controller = ref.read(subscriptionControllerProvider.notifier);
     final user = ref.watch(candidateControllerProvider).value;
     final hasUsedTrial = user?.hasUsedTrial ?? false;
@@ -143,6 +144,17 @@ class SubscriptionPromptDialog extends ConsumerWidget {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 24),
+                  if (paymentNotice != null && paymentNotice.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      color: Colors.orange.shade800,
+                      child: Text(
+                        paymentNotice,
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   _buildBenefitRow(context, 'Applying for the job'),
                   _buildBenefitRow(context, 'Chat with this recruiter'),
                   _buildBenefitRow(context, 'Score this assessment'),

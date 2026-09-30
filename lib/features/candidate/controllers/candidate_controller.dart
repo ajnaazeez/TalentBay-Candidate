@@ -28,12 +28,7 @@ class CandidateController extends StreamNotifier<CandidateModel?> {
           if (candidate.subscriptionExpiryDate!.isBefore(DateTime.now())) {
             // Asynchronously update Firestore so future reads are correct
             Future.microtask(() {
-              _repository.updateCandidate(
-                candidate.copyWith(
-                  isPremium: false,
-                  subscriptionStatus: 'expired',
-                ),
-              );
+              _repository.markSubscriptionExpired(candidate.uid);
             });
             // Immediately yield the un-premium state
             return candidate.copyWith(
@@ -49,10 +44,6 @@ class CandidateController extends StreamNotifier<CandidateModel?> {
   }
 
   Future<void> updateProfile(CandidateModel candidate) async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
-      await _repository.updateCandidate(candidate);
-      return candidate;
-    });
+    await _repository.updateCandidate(candidate);
   }
 }
