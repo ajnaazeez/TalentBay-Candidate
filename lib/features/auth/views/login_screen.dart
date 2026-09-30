@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../controllers/auth_controller.dart';
 import '../../../../core/utils/firebase_error_handler.dart';
+import '../../../../core/utils/phone_utils.dart';
 import '../../../../core/theme/app_colors.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
 
@@ -27,9 +28,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (_isPhoneLogin) {
       // Trigger OTP flow
       final phoneNumber = _phoneController.text.trim();
-      final formattedPhoneNumber = _fullPhoneNumber.isNotEmpty
-          ? _fullPhoneNumber
-          : (phoneNumber.startsWith('+') ? phoneNumber : '+91$phoneNumber');
+      if (phoneNumber.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Phone number is required.')),
+        );
+        return;
+      }
+
+      final formattedPhoneNumber = PhoneUtils.normalizeE164(
+        _fullPhoneNumber.isNotEmpty ? _fullPhoneNumber : phoneNumber,
+      );
+
+      if (!PhoneUtils.isValidE164(formattedPhoneNumber)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a valid phone number.')),
+        );
+        return;
+      }
 
       ref
           .read(authControllerProvider.notifier)

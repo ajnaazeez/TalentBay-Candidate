@@ -8,7 +8,7 @@ class FirebaseErrorHandler {
     } else if (error is FirebaseAuthException) {
       switch (error.code) {
         case 'user-not-found':
-          return 'No user found with this email.';
+          return 'No user found with this email or phone number.';
         case 'wrong-password':
           return 'Incorrect password. Please try again.';
         case 'email-already-in-use':
@@ -22,7 +22,10 @@ class FirebaseErrorHandler {
         case 'too-many-requests':
           return 'Too many requests. Please try again later.';
         case 'credential-already-in-use':
-          return 'This credential is already associated with a different user account.';
+        case 'phone-number-already-exists':
+          return 'This phone number is already registered to another account.';
+        case 'invalid-phone-number':
+          return 'Please enter a valid phone number.';
         case 'invalid-credential':
           return 'Invalid credential. Please try again.';
         case 'invalid-verification-code':

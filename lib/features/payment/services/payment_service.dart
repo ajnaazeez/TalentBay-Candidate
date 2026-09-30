@@ -30,6 +30,16 @@ class PaymentService {
     required String orderId,
   }) {
     final numAmount = int.tryParse(amount) ?? double.tryParse(amount)?.toInt() ?? 0;
+    
+    // Sanitize contact number for Razorpay: remove non-digits, keep last 10 digits if Indian format
+    String sanitizedContact = contact.replaceAll(RegExp(r'\D'), '');
+    if (sanitizedContact.length > 10 && sanitizedContact.startsWith('91')) {
+      sanitizedContact = sanitizedContact.substring(sanitizedContact.length - 10);
+    }
+    if (sanitizedContact.isEmpty) {
+      sanitizedContact = '9999999999';
+    }
+
     final options = <String, dynamic>{
       'key': PaymentConstants.razorpayKeyId,
       'amount': numAmount,
@@ -37,7 +47,7 @@ class PaymentService {
       'name': PaymentConstants.companyName,
       'description': description,
       'prefill': {
-        'contact': contact.trim().isNotEmpty ? contact.trim() : '9999999999',
+        'contact': sanitizedContact,
         'email': email.trim().isNotEmpty ? email.trim() : 'candidate@talentbay.com',
       },
       'theme': {
@@ -49,15 +59,14 @@ class PaymentService {
       },
     };
 
-    // Note: When order_id is passed, Razorpay SDK uses the amount bound to the server-side Order.
-    // Specifying an amount that differs from the backend order will cause Razorpay SDK to reject the checkout.
+    // Note: Razorpay Flutter SDK requires amount in options even when order_id is present.
+    // The amount in options MUST match the order's amount in paise.
     if (orderId.trim().isNotEmpty) {
       options['order_id'] = orderId.trim();
-      options.remove('amount');
     }
 
     try {
-      print('[PaymentService] Opening Razorpay checkout with order_id: ${options['order_id']}');
+      print('[PaymentService] Opening Razorpay checkout with order_id: ${options['order_id']}, amount: ${options['amount']}');
       _razorpay.open(options);
     } catch (e) {
       print('[PaymentService] Razorpay open exception: $e');

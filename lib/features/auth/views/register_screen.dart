@@ -7,6 +7,7 @@ import 'package:flutter/gestures.dart';
 
 import '../controllers/auth_controller.dart';
 import '../../../../core/utils/firebase_error_handler.dart';
+import '../../../../core/utils/phone_utils.dart';
 import '../../../../core/theme/app_colors.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
@@ -64,9 +65,11 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       return;
     }
 
-    final phoneNumber = _fullPhoneNumber.isNotEmpty
-        ? _fullPhoneNumber
-        : _phoneController.text.trim();
+    final rawPhone = _phoneController.text.trim();
+    final candidatePhone = _fullPhoneNumber.isNotEmpty ? _fullPhoneNumber : rawPhone;
+    final String? normalizedPhone = candidatePhone.isNotEmpty
+        ? PhoneUtils.normalizeE164(candidatePhone)
+        : null;
 
     // Send Email OTP first for email verification
     final sent = await ref
@@ -85,7 +88,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             'password': password,
             'firstName': firstName,
             'lastName': lastName,
-            'phoneNumber': phoneNumber,
+            'phoneNumber': normalizedPhone,
           },
         },
       );

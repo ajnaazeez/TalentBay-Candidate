@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../repositories/auth_repository.dart';
+import '../../../../core/utils/firebase_error_handler.dart';
 
 final authControllerProvider = AsyncNotifierProvider<AuthController, void>(() {
   return AuthController();
@@ -174,7 +175,7 @@ class AuthController extends AsyncNotifier<void> {
         verificationId: verificationId,
         smsCode: smsCode,
       );
-      await _authRepository.signInWithCredential(credential);
+      await _authRepository.signInWithPhoneOtp(credential);
     });
 
     if (state.hasError) {
@@ -185,7 +186,7 @@ class AuthController extends AsyncNotifier<void> {
           if (error.code == 'wrong-role') {
             message = 'User is invalid in this application';
           } else {
-            message = error.message ?? 'Verification Failed';
+            message = FirebaseErrorHandler.getMessage(error);
           }
         }
         ScaffoldMessenger.of(context).showSnackBar(
@@ -305,29 +306,35 @@ class AuthController extends AsyncNotifier<void> {
     );
   }
 
-  Future<void> verifyUpdatePhoneOtp(
+  Future<bool> verifyUpdatePhoneOtp(
     BuildContext context,
     String verificationId,
     String smsCode,
   ) async {
     state = const AsyncValue.loading();
+    bool success = false;
     state = await AsyncValue.guard(() async {
       PhoneAuthCredential credential = PhoneAuthProvider.credential(
         verificationId: verificationId,
         smsCode: smsCode,
       );
       await _authRepository.updatePhoneNumber(credential);
+      success = true;
     });
 
     if (state.hasError) {
       if (context.mounted) {
+        final message = FirebaseErrorHandler.getMessage(state.error!);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Verification Failed: ${state.error}')),
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.red[700],
+          ),
         );
       }
-    } else {
-      // Success is handled by the caller awaiting this future
+      return false;
     }
+    return success;
   }
 
   Future<void> sendPasswordResetEmail(
@@ -371,30 +378,30 @@ class AuthController extends AsyncNotifier<void> {
   }) async {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
-      // 1. Create the account
-      await _authRepository.signUpWithEmail(
-        email: email,
-        password: password,
-        firstName: firstName,
-        lastName: lastName,
-        phoneNumber: phoneNumber,
-      );
+      final existingUser = FirebaseAuth.instance.currentUser;
+      if (existingUser == null) {
+        // Create the account safely
+        await _authRepository.signUpWithEmail(
+          email: email,
+          password: password,
+          firstName: firstName,
+          lastName: lastName,
+          phoneNumber: phoneNumber,
+        );
+      }
 
-      // 2. Link the phone number
+      // Link the phone number credential to the active account
       try {
         await _authRepository.updatePhoneNumber(credential);
       } catch (e) {
-        // Rollback the newly created account if linking fails
-        debugPrint('Failed to link phone number: $e');
-        try {
-          await _authRepository.deleteAccount();
-        } catch (rollbackError) {
-          debugPrint('Rollback failed: $rollbackError');
-        }
-        
-        if (e is FirebaseAuthException && 
-            (e.code == 'credential-already-in-use' || e.code == 'phone-number-already-exists' || e.code == 'invalid-credential')) {
-          throw Exception('This phone number is already registered to an existing account.');
+        debugPrint('Phone number linking notice: $e');
+        if (e is FirebaseAuthException) {
+          if (e.code == 'credential-already-in-use' || e.code == 'phone-number-already-exists') {
+            throw Exception('This phone number is already registered to another user account.');
+          } else if (e.code == 'provider-already-linked') {
+            // Already linked to this user account, safe to proceed
+            return;
+          }
         }
         rethrow;
       }

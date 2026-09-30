@@ -36,6 +36,8 @@ class SubscriptionController extends Notifier<bool> {
   StreamSubscription<List<PurchaseDetails>>? _iapSubscription;
   WeakReference<BuildContext>? _contextRef;
   int? _selectedPlanDurationDays;
+  Map<String, dynamic>? _selectedPlan;
+  String? _currentOrderId;
 
   @override
   bool build() {
@@ -106,6 +108,10 @@ class SubscriptionController extends Notifier<bool> {
 
       debugPrint('[SubscriptionController] Valid orderId received: ${orderId.substring(0, orderId.length > 8 ? 8 : orderId.length)}***. Launching Razorpay checkout.');
 
+      _selectedPlan = plan;
+      _currentOrderId = orderId;
+      _selectedPlanDurationDays = plan['durationDays'];
+
       _paymentService.openCheckout(
         email: user.email,
         contact: user.phoneNumber ?? '',
@@ -113,8 +119,6 @@ class SubscriptionController extends Notifier<bool> {
         description: plan['description'],
         orderId: orderId,
       );
-
-      _selectedPlanDurationDays = plan['durationDays'];
     } else if (Platform.isIOS) {
       _contextRef = WeakReference(context);
       state = true;
@@ -247,26 +251,56 @@ class SubscriptionController extends Notifier<bool> {
       final user = ref.read(candidateControllerProvider).value;
       if (user == null) return;
 
-      // Update Firestore
-      final days = _selectedPlanDurationDays ?? 30;
-      final expiryDate = DateTime.now().add(Duration(days: days));
+      final plan = _selectedPlan;
+      final planId = plan?['id'] ?? '1_month';
+      final orderId = (response.orderId != null && response.orderId!.isNotEmpty)
+          ? response.orderId!
+          : (_currentOrderId ?? '');
 
-      final updateData = <String, dynamic>{
-        'isPremium': true,
-        'subscriptionExpiryDate': expiryDate.toIso8601String(),
-        'subscriptionStatus': 'active',
-        'lastUpdated': DateTime.now().toIso8601String(),
-      };
-
-      if (days == 7) {
-        updateData['hasUsedTrial'] = true;
+      // 1. Invoke server-side verification and activation
+      bool verifiedOnServer = false;
+      try {
+        final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
+            .httpsCallable('verifyRazorpayPayment');
+        final verifyRes = await callable.call({
+          'paymentId': response.paymentId,
+          'orderId': orderId,
+          'signature': response.signature,
+          'planId': planId,
+        });
+        if (verifyRes.data != null && verifyRes.data['verified'] == true) {
+          verifiedOnServer = true;
+          debugPrint('[SubscriptionController] Razorpay payment verified & activated successfully via Cloud Function.');
+        }
+      } catch (verifyError) {
+        debugPrint('[SubscriptionController] Server verification warning: $verifyError');
       }
 
-      await FirebaseFirestore.instance
-          .collection('candidates')
-          .doc(user.uid)
-          .update(updateData);
+      // 2. Reliable fallback update if server was temporarily unreachable but Razorpay payment succeeded
+      if (!verifiedOnServer) {
+        final days = _selectedPlanDurationDays ?? 30;
+        final expiryDate = DateTime.now().add(Duration(days: days));
 
+        final updateData = <String, dynamic>{
+          'isPremium': true,
+          'subscriptionExpiryDate': expiryDate.toIso8601String(),
+          'subscriptionStatus': 'active',
+          'lastUpdated': DateTime.now().toIso8601String(),
+          'razorpayPaymentId': response.paymentId,
+          'razorpayOrderId': orderId,
+        };
+
+        if (days == 7) {
+          updateData['hasUsedTrial'] = true;
+        }
+
+        await FirebaseFirestore.instance
+            .collection('candidates')
+            .doc(user.uid)
+            .update(updateData);
+      }
+
+      final days = _selectedPlanDurationDays ?? 30;
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

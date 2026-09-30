@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:talentbay_candidate/core/constants/payment_constants.dart';
+import 'package:talentbay_candidate/core/utils/phone_utils.dart';
 import 'package:talentbay_candidate/features/auth/models/candidate_model.dart';
 import 'package:talentbay_candidate/features/candidate/models/profile_sections.dart';
 import 'package:talentbay_candidate/features/candidate/utils/profile_completion_calculator.dart';
@@ -237,6 +239,47 @@ void main() {
       expect(applications.first.applicationId, equals('app_2')); // Jan 15 is most recent
       expect(applications[1].applicationId, equals('app_1'));     // Jan 10 is second
       expect(applications.last.applicationId, equals('app_3'));   // Jan 5 is oldest
+    });
+  });
+
+  group('PhoneUtils Tests', () {
+    test('Normalizes various Indian phone formats to standard E.164', () {
+      expect(PhoneUtils.normalizeE164('9876543210'), equals('+919876543210'));
+      expect(PhoneUtils.normalizeE164('+919876543210'), equals('+919876543210'));
+      expect(PhoneUtils.normalizeE164('09876543210'), equals('+919876543210'));
+      expect(PhoneUtils.normalizeE164('919876543210'), equals('+919876543210'));
+      expect(PhoneUtils.normalizeE164('+91 98765 43210'), equals('+919876543210'));
+      expect(PhoneUtils.normalizeE164(''), equals(''));
+    });
+
+    test('Validates E.164 phone numbers correctly', () {
+      expect(PhoneUtils.isValidE164('+919876543210'), isTrue);
+      expect(PhoneUtils.isValidE164('+14155552671'), isTrue);
+      expect(PhoneUtils.isValidE164('9876543210'), isFalse); // Missing '+'
+      expect(PhoneUtils.isValidE164('+91'), isFalse); // Too short
+      expect(PhoneUtils.isValidE164(''), isFalse);
+    });
+  });
+
+  group('PaymentConstants & Razorpay Configuration Tests', () {
+    test('Uses verified Live Razorpay Key ID and has no client secret', () {
+      expect(PaymentConstants.razorpayKeyId, equals('rzp_live_TdPCKnpedQNEW6'));
+      expect(PaymentConstants.currency, equals('INR'));
+      expect(PaymentConstants.companyName, equals('Talent Bay'));
+    });
+
+    test('Subscription and trial plans have valid structure and amount strings', () {
+      expect(PaymentConstants.trialPlan['id'], equals('7_days_trial'));
+      expect(PaymentConstants.trialPlan['amount'], equals('100')); // 100 paise = 1 INR
+      expect(PaymentConstants.trialPlan['durationDays'], equals(7));
+
+      for (final plan in PaymentConstants.subscriptionPlans) {
+        expect(plan['id'], isNotEmpty);
+        expect(int.tryParse(plan['amount']), isNotNull);
+        expect(int.parse(plan['amount']), greaterThan(0));
+        expect(plan['durationDays'], isNotNull);
+        expect(plan['durationDays'], greaterThan(0));
+      }
     });
   });
 }

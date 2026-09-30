@@ -70,9 +70,15 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
     super.dispose();
   }
 
+  bool _isProcessing = false;
+
   void _verifyOtp() {
+    if (_isProcessing) return;
     String otp = _controllers.map((e) => e.text).join();
     if (otp.length == 6) {
+      setState(() {
+        _isProcessing = true;
+      });
       if (widget.verificationType == 'email_register') {
         final regData = widget.registrationData!;
         final email = regData['email'] as String;
@@ -80,7 +86,8 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
             .read(authControllerProvider.notifier)
             .verifyEmailOtp(context, email, otp)
             .then((verified) {
-          if (verified && mounted) {
+          if (!mounted) return;
+          if (verified) {
             final phoneNumber = regData['phoneNumber'] as String?;
             if (phoneNumber != null && phoneNumber.trim().isNotEmpty) {
               final formattedPhone = phoneNumber.startsWith('+')
@@ -103,6 +110,8 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                   }
                 },
                 verificationCompleted: (credential) {
+                  if (_isProcessing) return;
+                  _isProcessing = true;
                   ref.read(authControllerProvider.notifier).completeRegistration(
                     context,
                     email: regData['email'],
@@ -111,7 +120,9 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                     lastName: regData['lastName'],
                     phoneNumber: phoneNumber,
                     credential: credential,
-                  );
+                  ).whenComplete(() {
+                    if (mounted) setState(() => _isProcessing = false);
+                  });
                 },
               );
             } else {
@@ -123,9 +134,15 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                 lastName: regData['lastName'],
                 phoneNumber: null,
                 shouldNavigate: true,
-              );
+              ).whenComplete(() {
+                if (mounted) setState(() => _isProcessing = false);
+              });
             }
+          } else {
+            setState(() => _isProcessing = false);
           }
+        }).catchError((_) {
+          if (mounted) setState(() => _isProcessing = false);
         });
       } else if (widget.verificationType == 'phone_link') {
         ref
@@ -135,6 +152,8 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
               if (mounted) {
                 context.go('/home');
               }
+            }).whenComplete(() {
+              if (mounted) setState(() => _isProcessing = false);
             });
       } else if (widget.verificationType == 'register') {
         final regData = widget.registrationData!;
@@ -153,11 +172,16 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
               lastName: regData['lastName'],
               phoneNumber: regData['phoneNumber'],
               credential: credential,
-            );
+            ).whenComplete(() {
+              if (mounted) setState(() => _isProcessing = false);
+            });
       } else {
         ref
             .read(authControllerProvider.notifier)
-            .verifyOtp(context, widget.verificationId, otp);
+            .verifyOtp(context, widget.verificationId, otp)
+            .whenComplete(() {
+              if (mounted) setState(() => _isProcessing = false);
+            });
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(

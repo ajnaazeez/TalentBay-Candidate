@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/utils/phone_utils.dart';
 import '../models/candidate_model.dart';
 
 final authRepositoryProvider = Provider(
@@ -107,36 +108,81 @@ class AuthRepository {
       }
     } else {
       // Fallback: Check if it's a recruiter (since we are in candidate app)
-      final recruiterDoc = await _firestore
-          .collection('recruiters')
-          .doc(user.uid)
-          .get();
-      if (recruiterDoc.exists) {
-        await _auth.signOut();
-        throw FirebaseAuthException(
-          code: 'wrong-role',
-          message: 'User is invalid in this application',
-        );
+      try {
+        final recruiterDoc = await _firestore
+            .collection('recruiters')
+            .doc(user.uid)
+            .get();
+        if (recruiterDoc.exists) {
+          await _auth.signOut();
+          throw FirebaseAuthException(
+            code: 'wrong-role',
+            message: 'User is invalid in this application',
+          );
+        }
+      } catch (e) {
+        if (e is FirebaseAuthException && e.code == 'wrong-role') rethrow;
       }
 
-      // If neither user nor recruiter document exists, auto-initialize candidate profile
-      final candidate = CandidateModel(
-        uid: user.uid,
-        email: user.email ?? '',
-        phoneNumber: user.phoneNumber,
-        firstName: fName,
-        lastName: lName,
-        createdAt: DateTime.now(),
-        lastUpdated: DateTime.now(),
-        isPremium: false,
-        subscriptionStatus: 'none',
-        hasUsedTrial: false,
-      );
+      // Check if /candidates/{uid} document already exists
+      final candidateDoc = await _firestore.collection('candidates').doc(user.uid).get();
+      if (!candidateDoc.exists) {
+        // If not, check if an existing candidate profile was saved with this phone number
+        Map<String, dynamic>? existingData;
+        if (user.phoneNumber != null && user.phoneNumber!.trim().isNotEmpty) {
+          final normalized = PhoneUtils.normalizeE164(user.phoneNumber!);
+          try {
+            final phoneQuery = await _firestore
+                .collection('candidates')
+                .where('phoneNumber', isEqualTo: normalized)
+                .limit(1)
+                .get();
+            if (phoneQuery.docs.isNotEmpty) {
+              existingData = phoneQuery.docs.first.data();
+            } else {
+              final digitsOnly = normalized.replaceAll(RegExp(r'\D'), '');
+              final tenDigits = digitsOnly.length >= 10
+                  ? digitsOnly.substring(digitsOnly.length - 10)
+                  : digitsOnly;
+              if (tenDigits.isNotEmpty) {
+                final fallbackQuery = await _firestore
+                    .collection('candidates')
+                    .where('phoneNumber', isEqualTo: tenDigits)
+                    .limit(1)
+                    .get();
+                if (fallbackQuery.docs.isNotEmpty) {
+                  existingData = fallbackQuery.docs.first.data();
+                }
+              }
+            }
+          } catch (_) {}
+        }
 
-      await _firestore
-          .collection('candidates')
-          .doc(user.uid)
-          .set(candidate.toMap());
+        if (existingData != null) {
+          final candidate = CandidateModel.fromMap(existingData, uid: user.uid);
+          await _firestore
+              .collection('candidates')
+              .doc(user.uid)
+              .set(candidate.toMap());
+        } else {
+          final candidate = CandidateModel(
+            uid: user.uid,
+            email: user.email ?? '',
+            phoneNumber: user.phoneNumber,
+            firstName: fName,
+            lastName: lName,
+            createdAt: DateTime.now(),
+            lastUpdated: DateTime.now(),
+            isPremium: false,
+            subscriptionStatus: 'none',
+            hasUsedTrial: false,
+          );
+          await _firestore
+              .collection('candidates')
+              .doc(user.uid)
+              .set(candidate.toMap());
+        }
+      }
 
       final userData = <String, dynamic>{
         'role': 'candidate',
@@ -157,6 +203,14 @@ class AuthRepository {
   }
 
   Future<UserCredential> signInWithCredential(AuthCredential credential) async {
+    final userCredential = await _auth.signInWithCredential(credential);
+    if (userCredential.user != null) {
+      await verifyUserRole(userCredential.user!);
+    }
+    return userCredential;
+  }
+
+  Future<UserCredential> signInWithPhoneOtp(PhoneAuthCredential credential) async {
     final userCredential = await _auth.signInWithCredential(credential);
     if (userCredential.user != null) {
       await verifyUserRole(userCredential.user!);
@@ -216,7 +270,18 @@ class AuthRepository {
       if (user == null) {
         throw Exception('No user is currently signed in');
       }
+      final initialUid = user.uid;
+
+      // Update phone number on currentUser
       await user.updatePhoneNumber(credential);
+
+      // Reload to ensure token and user state reflect the newly linked phone number
+      await user.reload();
+
+      final updatedUser = _auth.currentUser;
+      if (updatedUser == null || updatedUser.uid != initialUid) {
+        throw Exception('Session UID mismatch during phone linking');
+      }
     } catch (e) {
       rethrow;
     }

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.verifyEmailOtp = exports.sendEmailOtp = exports.verifyRazorpayPayment = exports.createRazorpayOrder = exports.deleteUserAccount = exports.getRelatedSkills = exports.generateAssessmentQuestions = exports.enhanceText = exports.bulkPostJobs = exports.generateJobDescription = exports.onMessageCreated = void 0;
+exports.loginWithPhoneOtp = exports.verifyEmailOtp = exports.sendEmailOtp = exports.verifyRazorpayPayment = exports.createRazorpayOrder = exports.deleteUserAccount = exports.getRelatedSkills = exports.generateAssessmentQuestions = exports.enhanceText = exports.bulkPostJobs = exports.generateJobDescription = exports.onMessageCreated = void 0;
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const firestore_1 = require("firebase-functions/v2/firestore");
@@ -1059,7 +1059,8 @@ const SUBSCRIPTION_PLANS = [
  * createRazorpayOrder (us-central1)
  * Creates a server-side order with Razorpay.
  */
-exports.createRazorpayOrder = (0, https_1.onCall)({ region: "us-central1" }, async (request) => {
+exports.createRazorpayOrder = (0, https_1.onCall)({ region: "us-central1", secrets: ["RAZORPAY_KEY_SECRET"] }, async (request) => {
+    var _a;
     // 1. Strict Authentication Check
     if (!request.auth || !request.auth.uid) {
         throw new https_1.HttpsError("unauthenticated", "You must be signed in to create an order.");
@@ -1082,6 +1083,12 @@ exports.createRazorpayOrder = (0, https_1.onCall)({ region: "us-central1" }, asy
             if ((rData === null || rData === void 0 ? void 0 : rData.subscriptionPlanId) || (rData === null || rData === void 0 ? void 0 : rData.subscriptionTier)) {
                 throw new https_1.HttpsError("failed-precondition", "The introductory trial offer is only available for first-time recruiter accounts.");
             }
+        }
+    }
+    else if (plan.id === "7_days_trial") {
+        const candidateDoc = await db.collection("candidates").doc(uid).get();
+        if (candidateDoc.exists && ((_a = candidateDoc.data()) === null || _a === void 0 ? void 0 : _a.hasUsedTrial) === true) {
+            throw new https_1.HttpsError("failed-precondition", "The introductory trial offer is only available once per candidate.");
         }
     }
     // 3. Razorpay Secrets Validation
@@ -1137,10 +1144,10 @@ exports.createRazorpayOrder = (0, https_1.onCall)({ region: "us-central1" }, asy
 /**
  * verifyRazorpayPayment (us-central1)
  * Verifies Razorpay payment signature, verifies payment status with Razorpay API,
- * records payment receipt idempotently, and activates recruiter subscription using Firebase Admin SDK.
+ * records payment receipt idempotently, and activates candidate or recruiter subscription using Firebase Admin SDK.
  */
-exports.verifyRazorpayPayment = (0, https_1.onCall)({ region: "us-central1" }, async (request) => {
-    var _a, _b;
+exports.verifyRazorpayPayment = (0, https_1.onCall)({ region: "us-central1", secrets: ["RAZORPAY_KEY_SECRET"] }, async (request) => {
+    var _a, _b, _c, _d;
     // 1. Strict Authentication Check
     if (!request.auth || !request.auth.uid) {
         throw new https_1.HttpsError("unauthenticated", "You must be signed in to verify payment.");
@@ -1235,68 +1242,39 @@ exports.verifyRazorpayPayment = (0, https_1.onCall)({ region: "us-central1" }, a
     if (rzpPayment.status !== "captured") {
         throw new https_1.HttpsError("failed-precondition", `Payment is not yet captured (Status: ${rzpPayment.status}). Please wait or complete payment.`);
     }
-    // 6. Idempotency Check on /recruiters/{uid}/payments/{paymentId}
-    const paymentDocRef = db
-        .collection("recruiters")
-        .doc(uid)
-        .collection("payments")
-        .doc(paymentId);
-    const existingPayment = await paymentDocRef.get();
-    if (existingPayment.exists && ((_b = existingPayment.data()) === null || _b === void 0 ? void 0 : _b.status) === "success") {
-        console.log(`[verifyRazorpayPayment] Payment ${paymentId} already processed idempotently.`);
-        return {
-            success: true,
-            verified: true,
-            alreadyProcessed: true,
-            message: "Payment has already been verified and activated.",
-        };
-    }
+    // 6. Check user type (Candidate vs Recruiter)
+    const userDoc = await db.collection("users").doc(uid).get();
+    const userRole = (_b = userDoc.data()) === null || _b === void 0 ? void 0 : _b.role;
+    const candidateDoc = await db.collection("candidates").doc(uid).get();
+    const isCandidate = userRole === "candidate" || candidateDoc.exists;
     // 7. Calculate Expiry Date & Perform Admin SDK Writes
     const now = new Date();
     const expiryDate = new Date(now.getTime() + plan.durationDays * 24 * 60 * 60 * 1000);
     const expiryTimestamp = admin.firestore.Timestamp.fromDate(expiryDate);
     const serverTime = admin.firestore.FieldValue.serverTimestamp();
     const batch = db.batch();
-    // 7a. Write payment receipt
-    batch.set(paymentDocRef, {
-        paymentId: paymentId,
-        orderId: data.orderId || rzpPayment.order_id || null,
-        signature: data.signature || null,
-        planId: plan.id,
-        planName: plan.name,
-        amount: plan.price,
-        amountPaise: plan.amountPaise,
-        currency: "INR",
-        durationDays: plan.durationDays,
-        status: "success",
-        method: rzpPayment.method || "razorpay",
-        email: rzpPayment.email || null,
-        contact: rzpPayment.contact || null,
-        createdAt: serverTime,
-        verifiedAt: serverTime,
-        expiryDate: expiryTimestamp,
-    }, { merge: true });
-    // 7b. Update canonical recruiter profile
-    const recruiterRef = db.collection("recruiters").doc(uid);
-    batch.set(recruiterRef, {
-        isSubscribed: true,
-        subscriptionPlanId: plan.id,
-        subscriptionTier: plan.id,
-        subscriptionExpiry: expiryTimestamp,
-        subscriptionStartDate: serverTime,
-        subscriptionDate: serverTime,
-        isSubscriptionCancelled: false,
-        razorpaySubscriptionId: paymentId,
-        paymentId: paymentId,
-        razorpayPaymentId: paymentId,
-        razorpayOrderId: data.orderId || rzpPayment.order_id || null,
-        paymentRef: paymentId,
-        subscriptionAmount: plan.price,
-        subscriptionAmountPaise: plan.amountPaise,
-        updatedAt: serverTime,
-        lastPayment: {
+    if (isCandidate) {
+        // 7a. Idempotency Check on /candidates/{uid}/payments/{paymentId}
+        const paymentDocRef = db
+            .collection("candidates")
+            .doc(uid)
+            .collection("payments")
+            .doc(paymentId);
+        const existingPayment = await paymentDocRef.get();
+        if (existingPayment.exists && ((_c = existingPayment.data()) === null || _c === void 0 ? void 0 : _c.status) === "success") {
+            console.log(`[verifyRazorpayPayment] Payment ${paymentId} already processed idempotently for candidate.`);
+            return {
+                success: true,
+                verified: true,
+                alreadyProcessed: true,
+                message: "Payment has already been verified and activated.",
+            };
+        }
+        // Write payment receipt under candidates
+        batch.set(paymentDocRef, {
             paymentId: paymentId,
             orderId: data.orderId || rzpPayment.order_id || null,
+            signature: data.signature || null,
             planId: plan.id,
             planName: plan.name,
             amount: plan.price,
@@ -1304,20 +1282,116 @@ exports.verifyRazorpayPayment = (0, https_1.onCall)({ region: "us-central1" }, a
             currency: "INR",
             durationDays: plan.durationDays,
             status: "success",
+            method: rzpPayment.method || "razorpay",
+            email: rzpPayment.email || null,
+            contact: rzpPayment.contact || null,
+            createdAt: serverTime,
             verifiedAt: serverTime,
             expiryDate: expiryTimestamp,
-        },
-    }, { merge: true });
-    // 7c. Update user role document
-    const userRef = db.collection("users").doc(uid);
-    batch.set(userRef, {
-        isSubscribed: true,
-        subscriptionPlanId: plan.id,
-        subscriptionExpiry: expiryTimestamp,
-        updatedAt: serverTime,
-    }, { merge: true });
-    await batch.commit();
-    console.log(`[verifyRazorpayPayment] Successfully activated subscription for user ${uid}, plan ${plan.id}, expiry ${expiryDate.toISOString()}`);
+        }, { merge: true });
+        // Update canonical candidate profile in /candidates/{uid}
+        const candidateRef = db.collection("candidates").doc(uid);
+        const candidateUpdate = {
+            isPremium: true,
+            subscriptionStatus: "active",
+            subscriptionExpiryDate: expiryDate.toISOString(),
+            subscriptionPlanId: plan.id,
+            razorpaySubscriptionId: paymentId,
+            razorpayPaymentId: paymentId,
+            razorpayOrderId: data.orderId || rzpPayment.order_id || null,
+            lastUpdated: now.toISOString(),
+        };
+        if (plan.id === "7_days_trial") {
+            candidateUpdate.hasUsedTrial = true;
+        }
+        batch.set(candidateRef, candidateUpdate, { merge: true });
+        // Update /users/{uid}
+        const userRef = db.collection("users").doc(uid);
+        batch.set(userRef, {
+            isPremium: true,
+            subscriptionPlanId: plan.id,
+            subscriptionExpiry: expiryTimestamp,
+            updatedAt: serverTime,
+        }, { merge: true });
+        await batch.commit();
+        console.log(`[verifyRazorpayPayment] Successfully activated candidate subscription for user ${uid}, plan ${plan.id}, expiry ${expiryDate.toISOString()}`);
+    }
+    else {
+        // Recruiter workflow
+        const paymentDocRef = db
+            .collection("recruiters")
+            .doc(uid)
+            .collection("payments")
+            .doc(paymentId);
+        const existingPayment = await paymentDocRef.get();
+        if (existingPayment.exists && ((_d = existingPayment.data()) === null || _d === void 0 ? void 0 : _d.status) === "success") {
+            console.log(`[verifyRazorpayPayment] Payment ${paymentId} already processed idempotently for recruiter.`);
+            return {
+                success: true,
+                verified: true,
+                alreadyProcessed: true,
+                message: "Payment has already been verified and activated.",
+            };
+        }
+        batch.set(paymentDocRef, {
+            paymentId: paymentId,
+            orderId: data.orderId || rzpPayment.order_id || null,
+            signature: data.signature || null,
+            planId: plan.id,
+            planName: plan.name,
+            amount: plan.price,
+            amountPaise: plan.amountPaise,
+            currency: "INR",
+            durationDays: plan.durationDays,
+            status: "success",
+            method: rzpPayment.method || "razorpay",
+            email: rzpPayment.email || null,
+            contact: rzpPayment.contact || null,
+            createdAt: serverTime,
+            verifiedAt: serverTime,
+            expiryDate: expiryTimestamp,
+        }, { merge: true });
+        const recruiterRef = db.collection("recruiters").doc(uid);
+        batch.set(recruiterRef, {
+            isSubscribed: true,
+            subscriptionPlanId: plan.id,
+            subscriptionTier: plan.id,
+            subscriptionExpiry: expiryTimestamp,
+            subscriptionStartDate: serverTime,
+            subscriptionDate: serverTime,
+            isSubscriptionCancelled: false,
+            razorpaySubscriptionId: paymentId,
+            paymentId: paymentId,
+            razorpayPaymentId: paymentId,
+            razorpayOrderId: data.orderId || rzpPayment.order_id || null,
+            paymentRef: paymentId,
+            subscriptionAmount: plan.price,
+            subscriptionAmountPaise: plan.amountPaise,
+            updatedAt: serverTime,
+            lastPayment: {
+                paymentId: paymentId,
+                orderId: data.orderId || rzpPayment.order_id || null,
+                planId: plan.id,
+                planName: plan.name,
+                amount: plan.price,
+                amountPaise: plan.amountPaise,
+                currency: "INR",
+                durationDays: plan.durationDays,
+                status: "success",
+                verifiedAt: serverTime,
+                expiryDate: expiryTimestamp,
+            },
+        }, { merge: true });
+        const userRef = db.collection("users").doc(uid);
+        batch.set(userRef, {
+            isSubscribed: true,
+            subscriptionPlanId: plan.id,
+            subscriptionExpiry: expiryTimestamp,
+            updatedAt: serverTime,
+        }, { merge: true });
+        await batch.commit();
+        console.log(`[verifyRazorpayPayment] Successfully activated recruiter subscription for user ${uid}, plan ${plan.id}, expiry ${expiryDate.toISOString()}`);
+    }
     return {
         success: true,
         verified: true,
@@ -1396,5 +1470,85 @@ exports.verifyEmailOtp = (0, https_1.onCall)({ region: "us-central1" }, async (r
         verified: true,
         message: "Email successfully verified.",
     };
+});
+exports.loginWithPhoneOtp = (0, https_1.onCall)({ region: "us-central1" }, async (request) => {
+    const data = request.data;
+    const idToken = ((data === null || data === void 0 ? void 0 : data.idToken) || "").trim();
+    if (!idToken) {
+        throw new https_1.HttpsError("invalid-argument", "ID Token is required.");
+    }
+    try {
+        // 1. Verify the ID token using Admin SDK (decodes RS256 token)
+        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        const tempUid = decodedToken.uid;
+        const phoneNumber = decodedToken.phone_number;
+        if (!phoneNumber) {
+            throw new https_1.HttpsError("invalid-argument", "ID token does not contain a verified phone number.");
+        }
+        console.log(`[loginWithPhoneOtp] Verified phone number: ${phoneNumber} for temp UID: ${tempUid}`);
+        // 2. Find primary user account by phone number via Admin SDK or Firestore mapping
+        let primaryUid = null;
+        // First check candidates collection for existing verified profile with this phone number
+        const candidateSnapshot = await db
+            .collection("candidates")
+            .where("phoneNumber", "==", phoneNumber)
+            .limit(2)
+            .get();
+        if (!candidateSnapshot.empty) {
+            if (candidateSnapshot.docs.length > 1) {
+                throw new https_1.HttpsError("already-exists", "Multiple candidate accounts found for this phone number. Please log in using Email and Password.");
+            }
+            primaryUid = candidateSnapshot.docs[0].id;
+        }
+        else {
+            // Fallback check: query Firebase Auth by phone number
+            try {
+                const authUser = await admin.auth().getUserByPhoneNumber(phoneNumber);
+                if (authUser && authUser.uid !== tempUid) {
+                    primaryUid = authUser.uid;
+                }
+            }
+            catch (_) { }
+        }
+        if (!primaryUid) {
+            // Safe cleanup of temporary user if created during this attempt
+            if (tempUid) {
+                await admin.auth().deleteUser(tempUid).catch(() => { });
+            }
+            throw new https_1.HttpsError("not-found", "No registered candidate account found for this phone number. Please register first.");
+        }
+        // If phone lookup matched the exact temp UID, check if temp UID actually has email or candidate doc
+        if (primaryUid === tempUid) {
+            const candidateDoc = await db.collection("candidates").doc(tempUid).get();
+            if (!candidateDoc.exists) {
+                // It's a raw un-linked Phone Auth user created in this session without profile
+                await admin.auth().deleteUser(tempUid).catch(() => { });
+                throw new https_1.HttpsError("not-found", "No registered candidate account found for this phone number. Please register first.");
+            }
+        }
+        else {
+            // Safely cleanup temporary phone auth user created in this session to prevent orphan user
+            await admin.auth().deleteUser(tempUid).catch((err) => {
+                console.warn(`[loginWithPhoneOtp] Non-fatal temp user cleanup warning: ${err.message}`);
+            });
+        }
+        // 3. Generate a secure Firebase Custom Auth Token for the primary candidate UID
+        const customToken = await admin.auth().createCustomToken(primaryUid, {
+            loginProvider: "phone_otp",
+        });
+        console.log(`[loginWithPhoneOtp] Successfully generated custom token for primary UID: ${primaryUid}`);
+        return {
+            success: true,
+            customToken: customToken,
+            uid: primaryUid,
+        };
+    }
+    catch (error) {
+        if (error instanceof https_1.HttpsError) {
+            throw error;
+        }
+        console.error("[loginWithPhoneOtp] Error verifying phone OTP token:", error);
+        throw new https_1.HttpsError("internal", error.message || "Failed to process phone OTP login.");
+    }
 });
 //# sourceMappingURL=index.js.map

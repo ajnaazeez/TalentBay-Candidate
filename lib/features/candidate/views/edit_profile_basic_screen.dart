@@ -4,11 +4,14 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../candidate/models/profile_sections.dart';
 import '../../auth/controllers/auth_controller.dart';
+import '../../auth/repositories/auth_repository.dart';
 import '../controllers/candidate_controller.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
 import 'package:csc_picker_plus/csc_picker_plus.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart'; // Added for date masking
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/phone_utils.dart';
+import '../../../../core/utils/firebase_error_handler.dart';
 
 class EditProfileBasicScreen extends ConsumerStatefulWidget {
   const EditProfileBasicScreen({super.key});
@@ -325,6 +328,8 @@ class _EditProfileBasicScreenState
     );
   }
 
+  bool _isVerifyingOtp = false;
+
   Future<void> _save() async {
     if (_formKey.currentState!.validate()) {
       final currentCandidate = ref.read(candidateControllerProvider).value;
@@ -333,50 +338,49 @@ class _EditProfileBasicScreenState
       final rawPhone = _phoneController.text.trim();
       if (rawPhone.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Mobile number is required')),
+          const SnackBar(content: Text('Phone number is required.')),
         );
         return;
       }
 
-      if (_completePhoneNumber != currentCandidate.phoneNumber) {
-        // Phone number changed, verify it first
-        await _handlePhoneUpdate(_completePhoneNumber);
+      final normalizedInputPhone = PhoneUtils.normalizeE164(
+        _completePhoneNumber.isNotEmpty ? _completePhoneNumber : rawPhone,
+      );
+
+      if (!PhoneUtils.isValidE164(normalizedInputPhone)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a valid phone number.')),
+        );
+        return;
+      }
+
+      final existingCandidatePhone = PhoneUtils.normalizeE164(currentCandidate.phoneNumber ?? '');
+
+      if (normalizedInputPhone != existingCandidatePhone) {
+        // Phone number changed or newly added: verify via OTP first
+        await _handlePhoneUpdate(normalizedInputPhone);
       } else {
-        // No change in phone number, just update profile
-        await _updateProfile();
+        // No change in phone number, update profile
+        await _updateProfile(existingCandidatePhone);
       }
     }
   }
 
-  Future<void> _handlePhoneUpdate(String newPhoneNumber) async {
+  Future<void> _handlePhoneUpdate(String formattedPhoneNumber) async {
     final rawPhone = _phoneController.text.trim();
     if (rawPhone.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Mobile number is required')),
+          const SnackBar(content: Text('Phone number is required.')),
         );
       }
       return;
     }
 
-    // Ensure phone number has country code (it should from _completePhoneNumber)
-    String formattedPhoneNumber = newPhoneNumber.replaceAll(RegExp(r'\s+'), '');
-    if (!formattedPhoneNumber.startsWith('+')) {
-      // Fallback logic if somehow missing
-      if (formattedPhoneNumber.startsWith('91') &&
-          formattedPhoneNumber.length == 12) {
-        formattedPhoneNumber = '+$formattedPhoneNumber';
-      } else {
-        formattedPhoneNumber = '+91$formattedPhoneNumber';
-      }
-    }
-
-    // Check if the formatted number is just a country code (e.g. "+91") or lacks subscriber digits
-    final subscriberDigits = formattedPhoneNumber.replaceAll(RegExp(r'^\+\d{1,3}'), '');
-    if (subscriberDigits.isEmpty || subscriberDigits.length < 7) {
+    if (!PhoneUtils.isValidE164(formattedPhoneNumber)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please enter a valid mobile number')),
+          const SnackBar(content: Text('Please enter a valid phone number.')),
         );
       }
       return;
@@ -384,19 +388,35 @@ class _EditProfileBasicScreenState
 
     final authController = ref.read(authControllerProvider.notifier);
 
-    // Send OTP
+    // Send OTP using callback
     await authController.sendUpdatePhoneOtpWithCallback(
       context: context,
       phoneNumber: formattedPhoneNumber,
       onCodeSent: (verificationId) {
         if (mounted) {
-          _showOtpDialog(verificationId, newPhoneNumber);
+          _showOtpDialog(verificationId, formattedPhoneNumber);
         }
       },
       onAutoVerified: (credential) async {
-        // Auto verified (e.g. instant verification)
-        // Proceed to update profile
-        await _updateProfile();
+        // Auto-resolution on Android SMS receiver
+        if (_isVerifyingOtp) return;
+        _isVerifyingOtp = true;
+        try {
+          await ref.read(authRepositoryProvider).updatePhoneNumber(credential);
+          if (mounted) {
+            _completePhoneNumber = formattedPhoneNumber;
+            await _updateProfile(formattedPhoneNumber);
+          }
+        } catch (e) {
+          if (mounted) {
+            final msg = FirebaseErrorHandler.getMessage(e);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(msg), backgroundColor: Colors.red[700]),
+            );
+          }
+        } finally {
+          _isVerifyingOtp = false;
+        }
       },
     );
   }
@@ -421,7 +441,7 @@ class _EditProfileBasicScreenState
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Enter the OTP sent to +91 $newPhoneNumber',
+              'Enter the OTP sent to $newPhoneNumber',
               style: TextStyle(
                 color: isDark
                     ? AppColors.textMainDark
@@ -485,9 +505,10 @@ class _EditProfileBasicScreenState
           ),
           ElevatedButton(
             onPressed: () async {
+              if (_isVerifyingOtp) return;
               final smsCode = otpController.text.trim();
               if (smsCode.length == 6) {
-                await _verifyOtp(verificationId, smsCode);
+                await _verifyOtp(verificationId, smsCode, newPhoneNumber);
               }
             },
             style: ElevatedButton.styleFrom(
@@ -504,28 +525,25 @@ class _EditProfileBasicScreenState
     );
   }
 
-  Future<void> _verifyOtp(String verificationId, String smsCode) async {
+  Future<void> _verifyOtp(String verificationId, String smsCode, String newPhoneNumber) async {
+    if (_isVerifyingOtp) return;
+    _isVerifyingOtp = true;
     try {
-      await ref
+      final success = await ref
           .read(authControllerProvider.notifier)
           .verifyUpdatePhoneOtp(context, verificationId, smsCode);
 
-      // If no error thrown (handled in controller mostly, but we need to know success here to close dialog and proceed)
-      // Controller uses AsyncNotifier, so we check state
-      final state = ref.read(authControllerProvider);
-      if (!state.hasError && !state.isLoading) {
-        if (mounted) {
-          Navigator.pop(context); // Close OTP dialog
-          await _updateProfile(); // Proceed to update profile with new number
-        }
+      if (success && mounted) {
+        Navigator.pop(context); // Close OTP dialog
+        _completePhoneNumber = newPhoneNumber;
+        await _updateProfile(newPhoneNumber); // Proceed to update profile with verified canonical E.164 number
       }
-    } catch (e) {
-      // Error handling is mostly in controller showing snackbar,
-      // but we might want to keep dialog open.
+    } finally {
+      _isVerifyingOtp = false;
     }
   }
 
-  Future<void> _updateProfile() async {
+  Future<void> _updateProfile([String? verifiedPhoneNumber]) async {
     final currentCandidate = ref.read(candidateControllerProvider).value;
     if (currentCandidate == null) return;
 
@@ -545,11 +563,16 @@ class _EditProfileBasicScreenState
       }
     }
 
+    final finalPhone = verifiedPhoneNumber ??
+        (_completePhoneNumber.isNotEmpty
+            ? PhoneUtils.normalizeE164(_completePhoneNumber)
+            : PhoneUtils.normalizeE164(_phoneController.text.trim()));
+
     // Update the candidate object with new values from controllers
     final updatedCandidate = currentCandidate.copyWith(
       firstName: _firstNameController.text.trim(),
       lastName: _lastNameController.text.trim(),
-      phoneNumber: _completePhoneNumber, // Use complete number
+      phoneNumber: finalPhone, // Canonical E.164 number
       currentLocation: Address(
         city: _cityController.text.trim(),
         state: _stateController.text.trim(),
@@ -573,7 +596,7 @@ class _EditProfileBasicScreenState
         context.pop();
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile updated successfully')),
+        const SnackBar(content: Text('Phone number verified successfully.')),
       );
     }
   }
