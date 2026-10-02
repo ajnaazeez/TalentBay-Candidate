@@ -489,9 +489,9 @@ exports.enhanceText = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region:
         const candidateModels = [
             process.env.GEMINI_MODEL,
             "gemini-3.8-flash",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
+            "gemini-flash-latest",
+            "gemini-3.5-flash",
+            "gemini-2.5-flash-lite",
         ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
         let lastErrorText = "";
         for (const modelName of candidateModels) {
@@ -590,8 +590,14 @@ exports.generateAssessmentQuestions = (0, https_1.onCall)({ secrets: ["GEMINI_AP
             console.error("GEMINI_API_KEY secret is not configured on the backend.");
             throw new https_1.HttpsError("failed-precondition", "AI service is currently misconfigured.");
         }
-        // 5. Model Selection
-        const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+        // 5. Model Selection & REST Invocation with Auto-Fallback
+        const candidateModels = [
+            process.env.GEMINI_MODEL,
+            "gemini-3.8-flash",
+            "gemini-flash-latest",
+            "gemini-3.5-flash",
+            "gemini-2.5-flash-lite",
+        ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
         const prompt = `Generate ${questionCount} multiple-choice questions for a "${skill.trim()}" assessment.
 Difficulty level: ${validatedDifficulty}.
 
@@ -607,38 +613,54 @@ Ensure the questions are relevant to ${skill.trim()} and match the ${validatedDi
 "options" must have exactly 4 strings.
 "correctAnswerIndex" must be an integer from 0 to 3 indicating the correct option.
 Do not include any markdown formatting like \`\`\`json ... \`\`\`, just the raw JSON array.`;
-        // 6. Invoke Gemini REST API
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                contents: [
-                    {
-                        parts: [
+        // 6. Invoke Gemini REST API with fallback across active models
+        let responseText = "";
+        let lastErrorText = "";
+        for (const modelName of candidateModels) {
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        contents: [
                             {
-                                text: prompt,
+                                parts: [
+                                    {
+                                        text: prompt,
+                                    },
+                                ],
                             },
                         ],
-                    },
-                ],
-                generationConfig: {
-                    temperature: 0.7,
-                    responseMimeType: "application/json",
-                },
-            }),
-        });
-        if (!response.ok) {
-            const errText = await response.text().catch(() => "");
-            console.error(`Gemini API returned status ${response.status}: ${errText}`);
-            throw new https_1.HttpsError("internal", "Failed to generate assessment questions from AI service.");
+                        generationConfig: {
+                            temperature: 0.7,
+                            responseMimeType: "application/json",
+                        },
+                    }),
+                });
+                if (response.ok) {
+                    const responseData = await response.json();
+                    const text = (_e = (_d = (_c = (_b = (_a = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
+                    if (text && typeof text === "string") {
+                        responseText = text;
+                        console.log(`[generateAssessmentQuestions] Successfully generated content using model: ${modelName}`);
+                        break;
+                    }
+                }
+                else {
+                    lastErrorText = await response.text().catch(() => "");
+                    console.warn(`Gemini API model ${modelName} returned status ${response.status}: ${lastErrorText}`);
+                }
+            }
+            catch (e) {
+                lastErrorText = e.message || String(e);
+                console.warn(`Gemini API request failed for model ${modelName}: ${lastErrorText}`);
+            }
         }
-        const responseData = await response.json();
-        const responseText = (_e = (_d = (_c = (_b = (_a = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
         if (!responseText || typeof responseText !== "string") {
-            console.error("Gemini API response did not contain text content:", JSON.stringify(responseData));
-            throw new https_1.HttpsError("internal", "Received invalid output format from AI service.");
+            console.error("All candidate Gemini models failed. Last error:", lastErrorText);
+            throw new https_1.HttpsError("internal", "Failed to generate assessment questions from AI service.");
         }
         // 7. Parse and Validate Response format
         let cleanJson = responseText.trim();
@@ -733,43 +755,59 @@ exports.getRelatedSkills = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], re
             console.error("GEMINI_API_KEY secret is not configured on the backend.");
             throw new https_1.HttpsError("failed-precondition", "AI service is currently misconfigured.");
         }
-        // 5. Model Selection
-        const model = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+        // 5. Model Selection & REST Invocation with Auto-Fallback
+        const candidateModels = [
+            process.env.GEMINI_MODEL,
+            "gemini-3.8-flash",
+            "gemini-flash-latest",
+            "gemini-3.5-flash",
+            "gemini-2.5-flash-lite",
+        ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
         const prompt = `Given the following list of technical skills: ${cleanedSkills.join(", ")}.
 Suggest 5 related technical skills that this candidate would benefit from learning or might already know.
 
 The output must be a valid JSON array of strings.
 Example: ["Skill A", "Skill B", "Skill C"]
 Do not include any markdown formatting.`;
-        // 6. Invoke Gemini REST API
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                contents: [
-                    {
-                        parts: [
+        // 6. Invoke Gemini REST API with fallback
+        let responseText = "";
+        for (const modelName of candidateModels) {
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        contents: [
                             {
-                                text: prompt,
+                                parts: [
+                                    {
+                                        text: prompt,
+                                    },
+                                ],
                             },
                         ],
-                    },
-                ],
-                generationConfig: {
-                    temperature: 0.7,
-                    responseMimeType: "application/json",
-                },
-            }),
-        });
-        if (!response.ok) {
-            const errText = await response.text().catch(() => "");
-            console.error(`Gemini API returned status ${response.status}: ${errText}`);
+                        generationConfig: {
+                            temperature: 0.7,
+                            responseMimeType: "application/json",
+                        },
+                    }),
+                });
+                if (response.ok) {
+                    const responseData = await response.json();
+                    const text = (_e = (_d = (_c = (_b = (_a = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
+                    if (text && typeof text === "string") {
+                        responseText = text;
+                        break;
+                    }
+                }
+            }
+            catch (_) { }
+        }
+        if (!responseText) {
             return { relatedSkills: [] };
         }
-        const responseData = await response.json();
-        const responseText = (_e = (_d = (_c = (_b = (_a = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
         if (!responseText || typeof responseText !== "string") {
             return { relatedSkills: [] };
         }

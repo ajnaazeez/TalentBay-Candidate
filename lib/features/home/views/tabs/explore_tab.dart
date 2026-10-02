@@ -578,67 +578,72 @@ class _ExploreTabState extends ConsumerState<ExploreTab> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: isDark ? Colors.grey[900] : Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
       constraints: BoxConstraints(
         maxWidth: MediaQuery.of(context).size.shortestSide >= 600 ? 550 : double.infinity,
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              skill.toUpperCase(),
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w900,
-                color: Colors.grey,
-                letterSpacing: 1.5,
-              ),
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  skill.toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.grey,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'SELECT DIFFICULTY',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    color: isDark ? Colors.white : Colors.black,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 32),
+                _buildDifficultyOption(
+                  skill,
+                  'Easy',
+                  'Perfect for beginners starting their journey.',
+                  isLocked: false, // Easy is always unlocked
+                  isCompleted: isEasyCompleted,
+                ),
+                _buildDifficultyOption(
+                  skill,
+                  'Medium',
+                  'Test your core knowledge and practical skills.',
+                  isLocked: !isEasyCompleted, // Locked if Easy not completed
+                  isCompleted: isMediumCompleted,
+                ),
+                _buildDifficultyOption(
+                  skill,
+                  'Hard',
+                  'Challenge yourself with advanced complex concepts.',
+                  isLocked: !isMediumCompleted, // Locked if Medium not completed
+                  isCompleted: isHardCompleted,
+                ),
+                _buildDifficultyOption(
+                  skill,
+                  'Mixed',
+                  'A balanced set of questions across all levels.',
+                  isLocked: !isHardCompleted, // Locked if Hard not completed
+                  isCompleted: isMixedCompleted,
+                ),
+                const SizedBox(height: 16),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              'SELECT DIFFICULTY',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
-                color: isDark ? Colors.white : Colors.black,
-                letterSpacing: -0.5,
-              ),
-            ),
-            const SizedBox(height: 32),
-            _buildDifficultyOption(
-              skill,
-              'Easy',
-              'Perfect for beginners starting their journey.',
-              isLocked: false, // Easy is always unlocked
-              isCompleted: isEasyCompleted,
-            ),
-            _buildDifficultyOption(
-              skill,
-              'Medium',
-              'Test your core knowledge and practical skills.',
-              isLocked: !isEasyCompleted, // Locked if Easy not completed
-              isCompleted: isMediumCompleted,
-            ),
-            _buildDifficultyOption(
-              skill,
-              'Hard',
-              'Challenge yourself with advanced complex concepts.',
-              isLocked: !isMediumCompleted, // Locked if Medium not completed
-              isCompleted: isHardCompleted,
-            ),
-            _buildDifficultyOption(
-              skill,
-              'Mixed',
-              'A balanced set of questions across all levels.',
-              isLocked: !isHardCompleted, // Locked if Hard not completed
-              isCompleted: isMixedCompleted,
-            ),
-            const SizedBox(height: 16),
-          ],
+          ),
         ),
       ),
     );
