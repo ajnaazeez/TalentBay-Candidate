@@ -29,8 +29,8 @@ void main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   await FirebaseAppCheck.instance.activate(
-    androidProvider: kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
-    appleProvider: kDebugMode ? AppleProvider.debug : AppleProvider.appAttestWithDeviceCheckFallback,
+    providerAndroid: kDebugMode ? AndroidProvider.debug : AndroidProvider.playIntegrity,
+    providerApple: kDebugMode ? AppleProvider.debug : AppleProvider.deviceCheck,
   );
 
   await MobileAds.instance.initialize();

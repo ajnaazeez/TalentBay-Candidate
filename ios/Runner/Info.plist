@@ -60,6 +60,11 @@
 		<false/>
 		<key>FlutterDeepLinkingEnabled</key>
 		<true/>
+		<key>UIBackgroundModes</key>
+		<array>
+			<string>fetch</string>
+			<string>remote-notification</string>
+		</array>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>This app requires access to the photo library to upload profile pictures and attachments.</string>
 		<key>NSCameraUsageDescription</key>
