@@ -5,10 +5,22 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 class AdBannerWidget extends StatefulWidget {
   const AdBannerWidget({super.key});
 
-  static const String _testAdUnitId = 'ca-app-pub-3940256099942544/9214589741';
-  static const String _prodAdUnitId = 'ca-app-pub-8248852961173383/8631059168';
+  static const String _androidProdAdUnitId = 'ca-app-pub-8248852961173383/8631059168';
+  static const String _iosProdAdUnitId = 'ca-app-pub-8248852961173383/4473949042';
 
-  static String get adUnitId => kDebugMode ? _testAdUnitId : _prodAdUnitId;
+  static const String _androidTestAdUnitId = 'ca-app-pub-3940256099942544/6300978111';
+  static const String _iosTestAdUnitId = 'ca-app-pub-3940256099942544/2934735716';
+
+  static String get adUnitId {
+    if (kDebugMode) {
+      return defaultTargetPlatform == TargetPlatform.iOS
+          ? _iosTestAdUnitId
+          : _androidTestAdUnitId;
+    }
+    return defaultTargetPlatform == TargetPlatform.iOS
+        ? _iosProdAdUnitId
+        : _androidProdAdUnitId;
+  }
 
   @override
   State<AdBannerWidget> createState() => _AdBannerWidgetState();
