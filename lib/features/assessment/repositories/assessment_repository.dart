@@ -107,4 +107,55 @@ class AssessmentRepository {
       'skillsAssessed': uniqueSkills.length,
     };
   }
+
+  /// Helper: Extract the latest score percentage per skill from a list of AssessmentResults
+  static Map<String, double> extractLatestSkillScores(List<AssessmentResult> results) {
+    final map = <String, double>{};
+    // Sort descending by date so latest result for each skill is stored
+    final sorted = List<AssessmentResult>.from(results)
+      ..sort((a, b) => b.completedAt.compareTo(a.completedAt));
+
+    for (var res in sorted) {
+      final key = res.skill.trim();
+      if (key.isNotEmpty && !map.containsKey(key)) {
+        map[key] = res.percentage;
+      }
+    }
+    return map;
+  }
+
+  /// Helper: Calculate overall cumulative skill readiness percentage
+  static double calculateOverallPerformance(Map<String, double> skillScores) {
+    if (skillScores.isEmpty) return 0.0;
+    final total = skillScores.values.fold<double>(0.0, (sum, val) => sum + val);
+    return total / skillScores.length;
+  }
+
+  /// Helper: Calculate Job Skill Match Percentage against required job skills
+  static double calculateJobSkillMatch({
+    required Map<String, double> candidateSkillScores,
+    required List<String> requiredSkills,
+  }) {
+    if (requiredSkills.isEmpty) return 0.0;
+
+    // Build a case-insensitive map of candidate skill scores
+    final normalizedCandidateSkills = <String, double>{};
+    candidateSkillScores.forEach((key, value) {
+      normalizedCandidateSkills[key.trim().toLowerCase()] = value;
+    });
+
+    double totalMatchedScore = 0.0;
+    for (var reqSkill in requiredSkills) {
+      final key = reqSkill.trim().toLowerCase();
+      if (normalizedCandidateSkills.containsKey(key)) {
+        totalMatchedScore += normalizedCandidateSkills[key]!;
+      } else {
+        // Unassessed required skill counts as 0% for match calculation (as per product specification)
+        totalMatchedScore += 0.0;
+      }
+    }
+
+    return totalMatchedScore / requiredSkills.length;
+  }
 }
+

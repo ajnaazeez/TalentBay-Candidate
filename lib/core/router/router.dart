@@ -14,6 +14,7 @@ import '../../features/settings/views/settings_screen.dart';
 import '../../features/jobs/views/job_details_screen.dart';
 import '../../features/home/views/invitations_screen.dart';
 import '../../features/notifications/views/notification_screen.dart';
+import '../../features/assessment/views/career_readiness_screen.dart';
 
 class _RouterRefresh extends ChangeNotifier {
   _RouterRefresh(Ref ref) {
@@ -137,8 +138,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/notifications',
         builder: (context, state) => const NotificationScreen(),
       ),
+      GoRoute(
+        path: '/career-readiness',
+        builder: (context, state) {
+          final jobId = state.uri.queryParameters['jobId'];
+          return CareerReadinessScreen(jobId: jobId);
+        },
+      ),
     ],
   );
   ref.onDispose(router.dispose);
   return router;
 });
+

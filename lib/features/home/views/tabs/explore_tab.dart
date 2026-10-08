@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../candidate/controllers/candidate_controller.dart';
 
@@ -203,6 +204,28 @@ class _ExploreTabState extends ConsumerState<ExploreTab> {
                               ),
                             ),
                           ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => context.push('/career-readiness'),
+                          icon: const Icon(Icons.analytics_outlined, size: 16),
+                          label: const Text(
+                            'HOW AM I PERFORMING?',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primaryBrand,
+                            side: BorderSide(
+                              color: AppColors.primaryBrand.withOpacity(0.5),
+                            ),
+                          ),
                         ),
                       ),
                     ],

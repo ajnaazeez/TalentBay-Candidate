@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../candidate/controllers/candidate_controller.dart';
 import '../../../candidate/repositories/candidate_repository.dart';
 import '../../../jobs/models/job_model.dart';
+import '../../../assessment/repositories/assessment_repository.dart';
+import '../../../assessment/models/assessment_model.dart';
 
 class JobCard extends ConsumerWidget {
   final JobModel job;
@@ -166,6 +168,64 @@ class JobCard extends ConsumerWidget {
                                     ),
                                   ),
                                 ),
+                              ],
+                              if (candidateState.value?.uid != null) ...[
+                                () {
+                                  final requiredSkills = job.skillsRequired.isNotEmpty
+                                      ? job.skillsRequired
+                                      : job.mustHaveSkills;
+                                  if (requiredSkills.isEmpty) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return StreamBuilder<List<AssessmentResult>>(
+                                    stream: ref
+                                        .watch(assessmentRepositoryProvider)
+                                        .getCandidateAssessments(
+                                          candidateState.value!.uid,
+                                        ),
+                                    builder: (context, snapshot) {
+                                      if (!snapshot.hasData ||
+                                          snapshot.data!.isEmpty) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      final scores =
+                                          AssessmentRepository.extractLatestSkillScores(
+                                            snapshot.data!,
+                                          );
+                                      final match =
+                                          AssessmentRepository.calculateJobSkillMatch(
+                                            candidateSkillScores: scores,
+                                            requiredSkills: requiredSkills,
+                                          );
+                                      if (match <= 0) return const SizedBox.shrink();
+                                      return Padding(
+                                        padding: const EdgeInsets.only(left: 6.0),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.teal.shade50,
+                                            border: Border.all(
+                                              color: Colors.teal.shade200,
+                                            ),
+                                            borderRadius: BorderRadius.zero,
+                                          ),
+                                          child: Text(
+                                            '${match.toInt()}% MATCH',
+                                            style: TextStyle(
+                                              fontSize: 8,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.teal.shade800,
+                                              letterSpacing: 0.5,
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                }(),
                               ],
                             ],
                           ),

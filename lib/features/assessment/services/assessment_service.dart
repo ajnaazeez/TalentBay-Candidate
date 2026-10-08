@@ -95,5 +95,29 @@ class AssessmentService {
     if (percentage >= 60) return 'Intermediate';
     return 'Beginner';
   }
+
+  /// Generate career readiness & skill improvement guidance via Cloud Functions
+  static Future<Map<String, dynamic>> getCareerReadinessGuidance({
+    required Map<String, double> skillScores,
+    String? targetJobTitle,
+    List<String>? targetJobSkills,
+  }) async {
+    try {
+      final callable = _functions.httpsCallable('getCareerReadinessGuidance');
+      final response = await callable.call<Map<String, dynamic>>({
+        'skillScores': skillScores,
+        if (targetJobTitle != null && targetJobTitle.isNotEmpty)
+          'targetJobTitle': targetJobTitle,
+        if (targetJobSkills != null && targetJobSkills.isNotEmpty)
+          'targetJobSkills': targetJobSkills,
+      });
+
+      return Map<String, dynamic>.from(response.data);
+    } catch (e) {
+      print('Career Readiness Guidance generation failed: $e');
+      rethrow;
+    }
+  }
 }
+
 

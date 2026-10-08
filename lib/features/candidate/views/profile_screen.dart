@@ -986,69 +986,92 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         return _buildSectionCard(
           title: 'Skill Assessments',
           content: Column(
-            children: assessments.map((assessment) {
-              return Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: theme.colorScheme.onSurface.withOpacity(0.12),
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16.0),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => context.push('/career-readiness'),
+                    icon: const Icon(Icons.analytics_outlined, size: 18),
+                    label: const Text(
+                      'CHECK PERFORMANCE & READINESS',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
                 ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            assessment.skill.toUpperCase(),
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: theme.colorScheme.onSurface,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${assessment.difficulty} • ${assessment.proficiencyLevel}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: theme.colorScheme.onSurface.withOpacity(
-                                0.7,
-                              ),
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${assessment.percentage.toInt()}% Score',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: ColorHelper.getColorForScore(
-                                assessment.percentage,
-                              ),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
+              ),
+              ...assessments.map(
+                (assessment) => Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: theme.colorScheme.onSurface.withOpacity(0.12),
                       ),
                     ),
-                    Icon(
-                      Icons.verified,
-                      color: theme.colorScheme.onSurface,
-                      size: 20,
-                    ),
-                  ],
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              assessment.skill.toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: theme.colorScheme.onSurface,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${assessment.difficulty} • ${assessment.proficiencyLevel}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: theme.colorScheme.onSurface.withOpacity(
+                                  0.7,
+                                ),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${assessment.percentage.toInt()}% Score',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: ColorHelper.getColorForScore(
+                                  assessment.percentage,
+                                ),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        Icons.verified,
+                        color: theme.colorScheme.onSurface,
+                        size: 20,
+                      ),
+                    ],
+                  ),
                 ),
-              );
-            }).toList(),
-          ),
-        );
-      },
-    );
+              ),
+          ],
+        ),
+      );
+    },
+  );
   }
 
   Widget _buildPersonalDetails(CandidateModel candidate) {

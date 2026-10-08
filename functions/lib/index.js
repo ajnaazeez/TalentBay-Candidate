@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.loginWithPhoneOtp = exports.syncVerifiedPhone = exports.reconcileMyPayments = exports.confirmRazorpayPayment = exports.verifyEmailOtp = exports.sendEmailOtp = exports.verifyRazorpayPayment = exports.createRazorpayOrder = exports.deleteUserAccount = exports.getRelatedSkills = exports.generateAssessmentQuestions = exports.enhanceText = exports.bulkPostJobs = exports.generateJobDescription = exports.onMessageCreated = void 0;
+exports.getCareerReadinessGuidance = exports.loginWithPhoneOtp = exports.syncVerifiedPhone = exports.reconcileMyPayments = exports.confirmRazorpayPayment = exports.verifyEmailOtp = exports.sendEmailOtp = exports.verifyRazorpayPayment = exports.createRazorpayOrder = exports.deleteUserAccount = exports.getRelatedSkills = exports.generateAssessmentQuestions = exports.enhanceText = exports.bulkPostJobs = exports.generateJobDescription = exports.onMessageCreated = void 0;
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const firestore_1 = require("firebase-functions/v2/firestore");
@@ -488,10 +488,11 @@ exports.enhanceText = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region:
         // 5. Model Selection & REST Invocation with Auto-Fallback
         const candidateModels = [
             process.env.GEMINI_MODEL,
-            "gemini-3.8-flash",
+            "gemini-1.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.5-flash",
+            "gemini-1.5-pro",
             "gemini-flash-latest",
-            "gemini-3.5-flash",
-            "gemini-2.5-flash-lite",
         ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
         let lastErrorText = "";
         for (const modelName of candidateModels) {
@@ -593,10 +594,11 @@ exports.generateAssessmentQuestions = (0, https_1.onCall)({ secrets: ["GEMINI_AP
         // 5. Model Selection & REST Invocation with Auto-Fallback
         const candidateModels = [
             process.env.GEMINI_MODEL,
-            "gemini-3.8-flash",
+            "gemini-1.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.5-flash",
+            "gemini-1.5-pro",
             "gemini-flash-latest",
-            "gemini-3.5-flash",
-            "gemini-2.5-flash-lite",
         ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
         const prompt = `Generate ${questionCount} multiple-choice questions for a "${skill.trim()}" assessment.
 Difficulty level: ${validatedDifficulty}.
@@ -758,10 +760,11 @@ exports.getRelatedSkills = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], re
         // 5. Model Selection & REST Invocation with Auto-Fallback
         const candidateModels = [
             process.env.GEMINI_MODEL,
-            "gemini-3.8-flash",
+            "gemini-1.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.5-flash",
+            "gemini-1.5-pro",
             "gemini-flash-latest",
-            "gemini-3.5-flash",
-            "gemini-2.5-flash-lite",
         ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
         const prompt = `Given the following list of technical skills: ${cleanedSkills.join(", ")}.
 Suggest 5 related technical skills that this candidate would benefit from learning or might already know.
@@ -2104,6 +2107,159 @@ exports.loginWithPhoneOtp = (0, https_1.onCall)({ region: "us-central1" }, async
         }
         console.error("[loginWithPhoneOtp] Error verifying phone OTP token:", error);
         throw new https_1.HttpsError("internal", error.message || "Failed to process phone OTP login.");
+    }
+});
+exports.getCareerReadinessGuidance = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region: "us-central1" }, async (request) => {
+    var _a, _b, _c, _d, _e;
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "The function must be called while authenticated.");
+    }
+    const userId = request.auth.uid;
+    try {
+        let candidateDoc = await db.collection("candidates").doc(userId).get();
+        if (!candidateDoc.exists) {
+            candidateDoc = await db.collection("users").doc(userId).get();
+        }
+        if (!candidateDoc.exists) {
+            throw new https_1.HttpsError("permission-denied", "Candidate profile not found or unauthorized.");
+        }
+        const data = request.data || {};
+        const skillScores = data.skillScores || {};
+        const targetJobTitle = (data.targetJobTitle || "").trim();
+        const targetJobSkills = Array.isArray(data.targetJobSkills) ? data.targetJobSkills : [];
+        const apiKey = (process.env.GEMINI_API_KEY || "").trim();
+        if (!apiKey) {
+            throw new https_1.HttpsError("failed-precondition", "AI service is currently misconfigured.");
+        }
+        const candidateModels = [
+            process.env.GEMINI_MODEL,
+            "gemini-1.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.5-flash",
+            "gemini-1.5-pro",
+            "gemini-flash-latest",
+        ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
+        const skillsFormatted = Object.entries(skillScores)
+            .map(([skill, score]) => `- ${skill}: ${score}%`)
+            .join("\n");
+        let prompt = `Analyze the candidate's technical skill assessment scores and provide supportive, practical, step-by-step career readiness guidance.
+
+Candidate Skill Scores:
+${skillsFormatted || "No skills assessed yet."}`;
+        if (targetJobTitle && targetJobSkills.length > 0) {
+            prompt += `\n\nTarget Job Role: "${targetJobTitle}"
+Required Job Skills: ${targetJobSkills.join(", ")}`;
+        }
+        prompt += `\n\nIMPORTANT RULES:
+1. Use supportive, encouraging tone. DO NOT use harsh labels like "failed", "poor", "weak", or "bad".
+2. Focus on practical improvement steps, key concepts to review, and clear actionable roadmap.
+3. The response MUST be a valid raw JSON object matching this structure:
+{
+  "overallSummary": "A concise supportive summary of current skill readiness and main recommendation.",
+  "skillsToStrengthen": [
+    {
+      "skill": "Skill Name",
+      "score": 45,
+      "guidance": "Short encouraging 1-line summary for this skill.",
+      "roadmapSteps": [
+        {
+          "stepNumber": 1,
+          "title": "Build the basics",
+          "description": "Short focus summary",
+          "actionHeader": "LEARN",
+          "actionItems": [
+            "Data modeling concepts",
+            "Relationships & schema basics",
+            "Basic DAX measures (CALCULATE, RELATED)"
+          ]
+        },
+        {
+          "stepNumber": 2,
+          "title": "Practice",
+          "description": "Short focus summary",
+          "actionHeader": "DO",
+          "actionItems": [
+            "Create a multi-page interactive dashboard",
+            "Use open-source datasets for hands-on practice"
+          ]
+        },
+        {
+          "stepNumber": 3,
+          "title": "Go deeper",
+          "description": "Short focus summary",
+          "actionHeader": "FOCUS ON",
+          "actionItems": [
+            "Power Query data cleansing",
+            "Schema optimization & query tuning"
+          ]
+        },
+        {
+          "stepNumber": 4,
+          "title": "Check your progress",
+          "description": "Short focus summary",
+          "actionHeader": "CHECK YOUR PROGRESS",
+          "actionItems": [
+            "Retake assessment to verify score improvement"
+          ]
+        }
+      ]
+    }
+  ],
+  "jobMatchAdvice": "Specific advice on preparing for the target job role (or empty string if no target job)."
+}
+Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
+        let responseText = "";
+        let lastErrorText = "";
+        for (const modelName of candidateModels) {
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: {
+                            temperature: 0.6,
+                            responseMimeType: "application/json",
+                        },
+                    }),
+                });
+                if (response.ok) {
+                    const responseData = await response.json();
+                    const text = (_e = (_d = (_c = (_b = (_a = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
+                    if (text && typeof text === "string") {
+                        responseText = text;
+                        break;
+                    }
+                }
+                else {
+                    lastErrorText = await response.text().catch(() => "");
+                }
+            }
+            catch (e) {
+                lastErrorText = e.message || String(e);
+            }
+        }
+        if (!responseText) {
+            console.error("[getCareerReadinessGuidance] Gemini API requests failed. Last error:", lastErrorText);
+            throw new https_1.HttpsError("internal", "AI failed to generate guidance.");
+        }
+        let cleanJson = responseText.trim();
+        if (cleanJson.startsWith("```")) {
+            cleanJson = cleanJson
+                .replace(/^```json\s*/i, "")
+                .replace(/^```\s*/, "")
+                .replace(/```$/, "")
+                .trim();
+        }
+        const parsedData = JSON.parse(cleanJson);
+        return parsedData;
+    }
+    catch (error) {
+        if (error instanceof https_1.HttpsError) {
+            throw error;
+        }
+        console.error("[getCareerReadinessGuidance] Error:", error);
+        throw new https_1.HttpsError("internal", "An error occurred while generating guidance.");
     }
 });
 //# sourceMappingURL=index.js.map

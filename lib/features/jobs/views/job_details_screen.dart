@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../candidate/controllers/candidate_controller.dart';
 import '../models/job_model.dart';
 import '../models/job_application_model.dart';
@@ -500,41 +501,74 @@ class _JobDetailsScreenState extends ConsumerState<JobDetailsScreen> {
               buttonText = 'LOADING...';
             }
 
-            return SizedBox(
-              height: 56,
-              child: ElevatedButton(
-                onPressed: canApply
-                    ? () => _applyToJob(job, candidateId)
-                    : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: buttonColor,
-                  foregroundColor: textColor,
-                  disabledBackgroundColor: buttonColor,
-                  disabledForegroundColor: textColor,
-                  elevation: 0,
-                  shape: const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.zero,
-                  ), // Sharp
-                  padding: EdgeInsets.zero,
-                ),
-                child: _isApplying || (isWaiting && candidateId.isNotEmpty)
-                    ? SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: isWaiting ? Colors.grey : Colors.white,
-                        ),
-                      )
-                    : Text(
-                        buttonText,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.5,
-                        ),
+            return Row(
+              children: [
+                SizedBox(
+                  height: 56,
+                  child: OutlinedButton.icon(
+                    onPressed: () =>
+                        context.push('/career-readiness?jobId=${job.jobId}'),
+                    icon: const Icon(Icons.school_outlined, size: 18),
+                    label: const Text(
+                      'PREPARE',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.0,
                       ),
-              ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: isDark ? Colors.white : Colors.black,
+                      side: BorderSide(
+                        color: isDark ? Colors.grey[700]! : Colors.black,
+                      ),
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.zero,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SizedBox(
+                    height: 56,
+                    child: ElevatedButton(
+                      onPressed: canApply
+                          ? () => _applyToJob(job, candidateId)
+                          : null,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: buttonColor,
+                        foregroundColor: textColor,
+                        disabledBackgroundColor: buttonColor,
+                        disabledForegroundColor: textColor,
+                        elevation: 0,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.zero,
+                        ), // Sharp
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: _isApplying || (isWaiting && candidateId.isNotEmpty)
+                          ? SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: isWaiting ? Colors.grey : Colors.white,
+                              ),
+                            )
+                          : Text(
+                              buttonText,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1.5,
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ],
             );
           },
         ),
