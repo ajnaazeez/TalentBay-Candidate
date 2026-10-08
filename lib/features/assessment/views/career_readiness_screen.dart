@@ -108,12 +108,21 @@ class _CareerReadinessScreenState
           _aiGuidance = guidance;
           _isLoadingAi = false;
 
-          // Expand the top focus skill by default for immediate value
+          // Expand all skills in guidance and skill scores by default so roadmap cards render
           final skillsList = guidance['skillsToStrengthen'] as List?;
           if (skillsList != null && skillsList.isNotEmpty) {
-            final firstSkill = skillsList.first['skill']?.toString();
-            if (firstSkill != null && firstSkill.isNotEmpty) {
-              _expandedSkills.add(firstSkill.toLowerCase().trim());
+            for (var item in skillsList) {
+              if (item is Map) {
+                final sName = item['skill']?.toString();
+                if (sName != null && sName.isNotEmpty) {
+                  _expandedSkills.add(sName.toLowerCase().trim());
+                }
+              }
+            }
+          }
+          for (var sName in skillScores.keys) {
+            if (sName.isNotEmpty) {
+              _expandedSkills.add(sName.toLowerCase().trim());
             }
           }
         });

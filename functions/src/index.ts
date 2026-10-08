@@ -2615,15 +2615,26 @@ Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
       }
 
       let cleanJson = responseText.trim();
-      if (cleanJson.startsWith("```")) {
-        cleanJson = cleanJson
-          .replace(/^```json\s*/i, "")
-          .replace(/^```\s*/, "")
-          .replace(/```$/, "")
-          .trim();
+      cleanJson = cleanJson
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/, "")
+        .replace(/\s*```$/, "")
+        .trim();
+
+      const firstBrace = cleanJson.indexOf("{");
+      const lastBrace = cleanJson.lastIndexOf("}");
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
       }
 
-      const parsedData = JSON.parse(cleanJson);
+      let parsedData: any;
+      try {
+        parsedData = JSON.parse(cleanJson);
+      } catch (e: any) {
+        console.error("[getCareerReadinessGuidance] JSON parse error. Raw text:", responseText, "Error:", e);
+        throw new HttpsError("internal", "AI generated a malformed response format. Please try again.");
+      }
+
       return parsedData;
     } catch (error: any) {
       if (error instanceof HttpsError) {

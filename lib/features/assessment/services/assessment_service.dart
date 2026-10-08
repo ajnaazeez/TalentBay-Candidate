@@ -104,7 +104,7 @@ class AssessmentService {
   }) async {
     try {
       final callable = _functions.httpsCallable('getCareerReadinessGuidance');
-      final response = await callable.call<Map<String, dynamic>>({
+      final response = await callable.call({
         'skillScores': skillScores,
         if (targetJobTitle != null && targetJobTitle.isNotEmpty)
           'targetJobTitle': targetJobTitle,
@@ -112,7 +112,12 @@ class AssessmentService {
           'targetJobSkills': targetJobSkills,
       });
 
-      return Map<String, dynamic>.from(response.data);
+      final data = response.data;
+      if (data == null || data is! Map) {
+        throw Exception('Invalid or empty response from AI guidance service.');
+      }
+
+      return Map<String, dynamic>.from(data);
     } catch (e) {
       print('Career Readiness Guidance generation failed: $e');
       rethrow;
