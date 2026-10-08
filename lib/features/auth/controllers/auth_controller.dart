@@ -136,6 +136,7 @@ class AuthController extends AsyncNotifier<void> {
   }
 
   String _getFriendlyPhoneAuthErrorMessage(FirebaseAuthException e) {
+    debugPrint('Firebase Phone Auth Exception: [${e.code}] ${e.message}');
     if (e.code == 'invalid-phone-number' ||
         (e.message != null &&
             (e.message!.contains('E.164') ||
