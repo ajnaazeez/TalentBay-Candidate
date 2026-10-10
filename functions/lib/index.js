@@ -2110,7 +2110,7 @@ exports.loginWithPhoneOtp = (0, https_1.onCall)({ region: "us-central1" }, async
     }
 });
 exports.getCareerReadinessGuidance = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region: "us-central1" }, async (request) => {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "The function must be called while authenticated.");
     }
@@ -2133,11 +2133,9 @@ exports.getCareerReadinessGuidance = (0, https_1.onCall)({ secrets: ["GEMINI_API
         }
         const candidateModels = [
             process.env.GEMINI_MODEL,
+            "gemini-3.8-flash",
             "gemini-1.5-flash",
             "gemini-2.0-flash",
-            "gemini-2.5-flash",
-            "gemini-1.5-pro",
-            "gemini-flash-latest",
         ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
         const skillsFormatted = Object.entries(skillScores)
             .map(([skill, score]) => `- ${skill}: ${score}%`)
@@ -2210,37 +2208,168 @@ Required Job Skills: ${targetJobSkills.join(", ")}`;
 Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
         let responseText = "";
         let lastErrorText = "";
+        let hasExplicitDailyQuotaExhaustion = false;
+        let hasServiceUnavailable = false;
+        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         for (const modelName of candidateModels) {
-            try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        generationConfig: {
-                            temperature: 0.6,
-                            responseMimeType: "application/json",
-                        },
-                    }),
-                });
-                if (response.ok) {
-                    const responseData = await response.json();
-                    const text = (_e = (_d = (_c = (_b = (_a = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
-                    if (text && typeof text === "string") {
-                        responseText = text;
+            const maxModelRetries = 2;
+            for (let attempt = 0; attempt <= maxModelRetries; attempt++) {
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            generationConfig: {
+                                temperature: 0.6,
+                                responseMimeType: "application/json",
+                            },
+                        }),
+                    });
+                    let isBlockedResponse = false;
+                    if (response.ok) {
+                        const responseData = await response.json();
+                        const candidate = (_a = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _a === void 0 ? void 0 : _a[0];
+                        const finishReason = candidate === null || candidate === void 0 ? void 0 : candidate.finishReason;
+                        const blockReason = (_b = responseData === null || responseData === void 0 ? void 0 : responseData.promptFeedback) === null || _b === void 0 ? void 0 : _b.blockReason;
+                        if (blockReason || (finishReason && finishReason !== "STOP" && finishReason !== "MAX_TOKENS")) {
+                            console.warn(`[getCareerReadinessGuidance] Model ${modelName} returned HTTP 200 with blocked/non-STOP status: blockReason=${blockReason}, finishReason=${finishReason}`);
+                            lastErrorText = `HTTP 200 response blocked (blockReason: ${blockReason || "none"}, finishReason: ${finishReason || "none"})`;
+                            isBlockedResponse = true;
+                        }
+                        else {
+                            const text = (_e = (_d = (_c = candidate === null || candidate === void 0 ? void 0 : candidate.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
+                            if (text && typeof text === "string" && text.trim().length > 0) {
+                                let cleanJson = text.trim();
+                                cleanJson = cleanJson
+                                    .replace(/^```json\s*/i, "")
+                                    .replace(/^```\s*/, "")
+                                    .replace(/\s*```$/, "")
+                                    .trim();
+                                const firstBrace = cleanJson.indexOf("{");
+                                const lastBrace = cleanJson.lastIndexOf("}");
+                                if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                                    cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
+                                }
+                                try {
+                                    const parsed = JSON.parse(cleanJson);
+                                    if (parsed &&
+                                        typeof parsed === "object" &&
+                                        typeof parsed.overallSummary === "string" &&
+                                        Array.isArray(parsed.skillsToStrengthen)) {
+                                        responseText = cleanJson;
+                                        console.log(`[getCareerReadinessGuidance] Successfully generated & validated content using model: ${modelName}`);
+                                        break;
+                                    }
+                                    else {
+                                        console.warn(`[getCareerReadinessGuidance] Model ${modelName} returned JSON missing required schema fields.`);
+                                        lastErrorText = "HTTP 200 returned JSON missing required schema fields";
+                                    }
+                                }
+                                catch (jsonErr) {
+                                    console.warn(`[getCareerReadinessGuidance] Model ${modelName} returned invalid/truncated JSON (finishReason: ${finishReason}): ${jsonErr.message}`);
+                                    lastErrorText = `HTTP 200 returned invalid/truncated JSON (finishReason: ${finishReason || "unknown"})`;
+                                }
+                            }
+                            else {
+                                console.warn(`[getCareerReadinessGuidance] Model ${modelName} returned HTTP 200 but text content was empty or missing.`);
+                                lastErrorText = "HTTP 200 returned empty text payload";
+                            }
+                        }
+                    }
+                    else {
+                        lastErrorText = await response.text().catch(() => "");
+                    }
+                    const status = response.status;
+                    console.warn(`[getCareerReadinessGuidance] Model ${modelName} attempt ${attempt + 1} status ${status}: ${lastErrorText.slice(0, 200)}`);
+                    if (status === 503 || lastErrorText.includes("503") || lastErrorText.includes("UNAVAILABLE")) {
+                        hasServiceUnavailable = true;
+                    }
+                    // Check specifically for explicit Daily Quota Exhaustion based on quota ID / metric
+                    let isExplicitDailyQuotaExhausted = false;
+                    let retryDelayMs = 0;
+                    if (status === 429) {
+                        try {
+                            const errObj = JSON.parse(lastErrorText);
+                            const errDetails = ((_f = errObj === null || errObj === void 0 ? void 0 : errObj.error) === null || _f === void 0 ? void 0 : _f.details) || [];
+                            const quotaFailure = errDetails.find((d) => { var _a; return (_a = d["@type"]) === null || _a === void 0 ? void 0 : _a.includes("QuotaFailure"); });
+                            const violations = (quotaFailure === null || quotaFailure === void 0 ? void 0 : quotaFailure.violations) || [];
+                            const dailyViolation = violations.find((v) => {
+                                var _a, _b, _c;
+                                return ((_a = v === null || v === void 0 ? void 0 : v.quotaId) === null || _a === void 0 ? void 0 : _a.includes("GenerateRequestsPerDay")) ||
+                                    ((_b = v === null || v === void 0 ? void 0 : v.quotaId) === null || _b === void 0 ? void 0 : _b.includes("PerDay")) ||
+                                    ((_c = v === null || v === void 0 ? void 0 : v.quotaMetric) === null || _c === void 0 ? void 0 : _c.includes("generate_content_free_tier_requests"));
+                            });
+                            if (dailyViolation ||
+                                lastErrorText.includes("GenerateRequestsPerDayPerProjectPerModel-FreeTier") ||
+                                lastErrorText.includes("GenerateRequestsPerDay")) {
+                                isExplicitDailyQuotaExhausted = true;
+                                hasExplicitDailyQuotaExhaustion = true;
+                            }
+                            const retryInfo = errDetails.find((d) => { var _a; return (_a = d["@type"]) === null || _a === void 0 ? void 0 : _a.includes("RetryInfo"); });
+                            if (retryInfo === null || retryInfo === void 0 ? void 0 : retryInfo.retryDelay) {
+                                const seconds = parseInt(retryInfo.retryDelay.replace("s", ""), 10);
+                                if (!isNaN(seconds) && seconds > 0) {
+                                    retryDelayMs = seconds * 1000;
+                                }
+                            }
+                        }
+                        catch (_) {
+                            if (lastErrorText.includes("GenerateRequestsPerDay")) {
+                                isExplicitDailyQuotaExhausted = true;
+                                hasExplicitDailyQuotaExhaustion = true;
+                            }
+                        }
+                        const retryAfterHeader = response.headers.get("retry-after");
+                        if (retryAfterHeader) {
+                            const seconds = parseInt(retryAfterHeader, 10);
+                            if (!isNaN(seconds) && seconds > 0) {
+                                retryDelayMs = seconds * 1000;
+                            }
+                        }
+                    }
+                    // If explicit daily quota is exhausted for this model, do not retry this model. Fall through to try next candidate model.
+                    if (status === 429 && isExplicitDailyQuotaExhausted) {
+                        console.warn(`[getCareerReadinessGuidance] Model ${modelName} Explicit Daily Quota Exhausted (GenerateRequestsPerDay). Skipping retries for this model.`);
                         break;
                     }
+                    // If response was blocked by content filters, retrying same prompt on same model will not help; fall through to next model
+                    if (response.ok && isBlockedResponse) {
+                        console.warn(`[getCareerReadinessGuidance] Model ${modelName} response was blocked. Skipping retries for this model.`);
+                        break;
+                    }
+                    // If transient rate limit (429 RPM/TPM), server overload (503), or invalid text 200, apply bounded backoff retry on same model
+                    const isTransientError = status === 429 || status === 503 || (response.ok && !responseText);
+                    if (isTransientError && attempt < maxModelRetries) {
+                        const backoffMs = retryDelayMs > 0 ? Math.min(retryDelayMs, 5000) : Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 500);
+                        console.log(`[getCareerReadinessGuidance] Retrying model ${modelName} in ${backoffMs}ms (attempt ${attempt + 1}/${maxModelRetries})...`);
+                        await delay(backoffMs);
+                        continue;
+                    }
+                    break;
                 }
-                else {
-                    lastErrorText = await response.text().catch(() => "");
+                catch (e) {
+                    lastErrorText = e.message || String(e);
+                    console.warn(`[getCareerReadinessGuidance] Exception trying model ${modelName} attempt ${attempt + 1}:`, lastErrorText);
+                    if (attempt < maxModelRetries) {
+                        await delay(1000 * (attempt + 1));
+                    }
                 }
             }
-            catch (e) {
-                lastErrorText = e.message || String(e);
+            if (responseText) {
+                break;
             }
         }
         if (!responseText) {
-            console.error("[getCareerReadinessGuidance] Gemini API requests failed. Last error:", lastErrorText);
+            console.error("[getCareerReadinessGuidance] All candidate Gemini models failed. Last error:", lastErrorText);
+            if (hasExplicitDailyQuotaExhaustion ||
+                lastErrorText.includes("RESOURCE_EXHAUSTED") ||
+                lastErrorText.includes("Quota exceeded")) {
+                throw new https_1.HttpsError("resource-exhausted", "The AI service daily usage limit has been reached. Please try again later or contact support.");
+            }
+            if (hasServiceUnavailable || lastErrorText.includes("UNAVAILABLE") || lastErrorText.includes("503")) {
+                throw new https_1.HttpsError("unavailable", "The AI service is currently experiencing high demand. Please try again in a few moments.");
+            }
             throw new https_1.HttpsError("internal", "AI failed to generate guidance.");
         }
         let cleanJson = responseText.trim();
