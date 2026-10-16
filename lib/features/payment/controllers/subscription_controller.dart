@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
+import 'package:talentbay_candidate/core/router/router.dart';
 import 'package:talentbay_candidate/features/candidate/controllers/candidate_controller.dart';
 import 'package:talentbay_candidate/features/payment/services/payment_service.dart';
 
@@ -53,6 +54,8 @@ class SubscriptionController extends Notifier<bool> {
   String? _currentOrderId;
   String? _currentPlanId;
   bool _didRecoverPayments = false;
+  bool _isProcessingPaymentResult = false;
+  VoidCallback? _onPaymentCancelled;
 
   @override
   bool build() {
@@ -84,6 +87,24 @@ class SubscriptionController extends Notifier<bool> {
     return false;
   }
 
+  BuildContext? _getValidContext([BuildContext? passedContext]) {
+    if (passedContext != null && passedContext.mounted) {
+      return passedContext;
+    }
+    final target = _contextRef?.target;
+    if (target != null && target.mounted) {
+      return target;
+    }
+    try {
+      final router = ref.read(routerProvider);
+      final navContext = router.routerDelegate.navigatorKey.currentContext;
+      if (navContext != null && navContext.mounted) {
+        return navContext;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   void initializePayment(BuildContext context) {
     _paymentService.initialize(
       onSuccess: (response) => _handlePaymentSuccess(response, context),
@@ -92,50 +113,88 @@ class SubscriptionController extends Notifier<bool> {
     );
   }
 
-  Future<void> startSubscription(BuildContext context, Map<String, dynamic> plan) async {
+  Future<void> startSubscription(
+    BuildContext context,
+    Map<String, dynamic> plan, {
+    VoidCallback? onPaymentCancelled,
+  }) async {
     final user = ref.read(candidateControllerProvider).value;
     if (user == null) return;
+
+    _contextRef = WeakReference(context);
+    _onPaymentCancelled = onPaymentCancelled;
+    _isProcessingPaymentResult = false;
 
     if (Platform.isAndroid) {
       // Initialize if not already (safeguard)
       initializePayment(context);
+      state = true;
 
       String orderId = '';
       try {
         final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
-            .httpsCallable('createRazorpayOrder');
-        final response = await callable.call({'planId': plan['id']});
+            .httpsCallable(
+              'createRazorpayOrder',
+              options: HttpsCallableOptions(timeout: const Duration(seconds: 45)),
+            );
+
+        HttpsCallableResult response;
+        try {
+          response = await callable.call({'planId': plan['id']});
+        } on FirebaseFunctionsException catch (fe) {
+          // If cold start or transient unavailability occurred, retry once after a short delay
+          if (fe.code == 'unavailable' || fe.code == 'deadline-exceeded') {
+            debugPrint('[SubscriptionController] First attempt failed with ${fe.code}. Retrying createRazorpayOrder once...');
+            await Future.delayed(const Duration(milliseconds: 1500));
+            response = await callable.call({'planId': plan['id']});
+          } else {
+            rethrow;
+          }
+        }
+
         final data = response.data;
         if (data != null && data is Map) {
           orderId = (data['orderId'] ?? data['id'] ?? '').toString();
         }
       } catch (e) {
-        debugPrint('[SubscriptionController] createRazorpayOrder error: $e');
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                e is FirebaseFunctionsException
-                    ? (e.message ?? 'Unable to start payment. Please try again.')
-                    : 'Unable to start payment. Please check your connection and try again.',
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
+        state = false;
+        String errorMessage;
+        if (e is FirebaseFunctionsException) {
+          debugPrint('[SubscriptionController] createRazorpayOrder failed: code=${e.code}, message=${e.message}, details=${e.details}');
+          switch (e.code) {
+            case 'unavailable':
+              errorMessage = 'Payment service is temporarily busy. Please check your internet connection and try again in a few moments.';
+              break;
+            case 'deadline-exceeded':
+              errorMessage = 'Payment request timed out. Please check your internet connection and try again.';
+              break;
+            case 'unauthenticated':
+              errorMessage = 'Your session has expired. Please log in again to subscribe.';
+              break;
+            case 'failed-precondition':
+              errorMessage = (e.message != null && e.message!.isNotEmpty && e.message != 'failed-precondition')
+                  ? e.message!
+                  : 'This subscription plan is not eligible for your account.';
+              break;
+            default:
+              errorMessage = (e.message != null && e.message!.isNotEmpty && e.message != e.code.toUpperCase())
+                  ? e.message!
+                  : 'Unable to start payment. Please try again.';
+              break;
+          }
+        } else {
+          debugPrint('[SubscriptionController] createRazorpayOrder unexpected error: $e');
+          errorMessage = 'Unable to start payment. Please check your connection and try again.';
         }
+
+        _showPaymentMessage(errorMessage, context: context, isError: true);
         return;
       }
 
       if (orderId.trim().isEmpty) {
+        state = false;
         debugPrint('[SubscriptionController] Order creation failed or returned empty orderId. Aborting Razorpay checkout.');
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Unable to start payment. Please try again.'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        _showPaymentMessage('Unable to start payment. Please try again.', context: context, isError: true);
         return;
       }
 
@@ -279,45 +338,91 @@ class SubscriptionController extends Notifier<bool> {
     PaymentSuccessResponse response,
     BuildContext context,
   ) async {
-    final orderId = (response.orderId != null && response.orderId!.isNotEmpty)
-        ? response.orderId!
-        : (_currentOrderId ?? '');
-    await _confirmWithBackend(
-      context,
-      orderId: orderId,
-      paymentId: response.paymentId,
-      signature: response.signature,
-      checkoutFailed: false,
-    );
+    if (_isProcessingPaymentResult) {
+      debugPrint('[SubscriptionController] Ignoring duplicate payment success callback.');
+      return;
+    }
+    _isProcessingPaymentResult = true;
+
+    try {
+      final orderId = (response.orderId != null && response.orderId!.isNotEmpty)
+          ? response.orderId!
+          : (_currentOrderId ?? '');
+      await _confirmWithBackend(
+        orderId: orderId,
+        paymentId: response.paymentId,
+        signature: response.signature,
+        checkoutFailed: false,
+      );
+    } finally {
+      _isProcessingPaymentResult = false;
+    }
   }
 
   Future<void> _handlePaymentFailure(
     PaymentFailureResponse response,
     BuildContext context,
   ) async {
-    final orderId = _currentOrderId ?? '';
-    if (orderId.isEmpty) {
-      _showPaymentMessage(
-        context,
-        _readableCheckoutError(response.message),
-        isError: true,
-      );
+    if (_isProcessingPaymentResult) {
+      debugPrint('[SubscriptionController] Ignoring duplicate payment failure callback.');
       return;
     }
+    _isProcessingPaymentResult = true;
 
-    // The checkout can report failure after the bank has already captured the money.
-    await _confirmWithBackend(
-      context,
-      orderId: orderId,
-      checkoutFailed: true,
-      checkoutMessage: _readableCheckoutError(response.message),
-    );
+    try {
+      final isCancelled = response.code == Razorpay.PAYMENT_CANCELLED ||
+          (response.message != null &&
+              (response.message!.contains('payment_cancelled') ||
+                  response.message!.toLowerCase().contains('cancel')));
+
+      final orderId = _currentOrderId ?? '';
+      final message = _readableCheckoutError(response.message);
+
+      if (isCancelled) {
+        // Reset loading state immediately on cancellation
+        state = false;
+        _showPaymentMessage(message, isError: false);
+        _onPaymentCancelled?.call();
+
+        // Preserve backend reconciliation in the background for uncertain payment outcomes
+        if (orderId.isNotEmpty) {
+          unawaited(
+            _confirmWithBackend(
+              orderId: orderId,
+              checkoutFailed: true,
+              checkoutMessage: message,
+              isCancellation: true,
+            ),
+          );
+        }
+        return;
+      }
+
+      if (orderId.isEmpty) {
+        state = false;
+        _showPaymentMessage(
+          message,
+          isError: true,
+        );
+        return;
+      }
+
+      // The checkout can report failure after the bank has already captured the money.
+      await _confirmWithBackend(
+        orderId: orderId,
+        checkoutFailed: true,
+        checkoutMessage: message,
+        isCancellation: false,
+      );
+    } finally {
+      _isProcessingPaymentResult = false;
+    }
   }
 
   String _readableCheckoutError(String? raw) {
     final text = raw?.trim() ?? '';
     if (text.isEmpty) {
-      return 'Payment was not completed. You have not been charged.';
+      return 'Payment was not completed. If any amount was deducted, the bank reverses it automatically within 5–7 working days.';
     }
     try {
       final decoded = text.startsWith('{') ? text : '';
@@ -327,30 +432,29 @@ class SubscriptionController extends Notifier<bool> {
         ).firstMatch(text);
         final reason = RegExp(r'"reason"\s*:\s*"([^"]+)"').firstMatch(text);
         if (reason?.group(1) == 'payment_cancelled') {
-          return 'Payment cancelled. You have not been charged.';
+          return 'Payment cancelled. If any amount was deducted, the bank reverses it automatically within 5–7 working days.';
         }
         if (description != null) {
-          return 'Payment was not completed: ${description.group(1)}. If any amount was deducted, the bank reverses it automatically.';
+          return 'Payment was not completed: ${description.group(1)}. If any amount was deducted, the bank reverses it automatically within 5–7 working days.';
         }
       }
     } catch (_) {}
     if (text.toLowerCase().contains('cancel')) {
-      return 'Payment cancelled. You have not been charged.';
+      return 'Payment cancelled. If any amount was deducted, the bank reverses it automatically within 5–7 working days.';
     }
-    return 'Payment was not completed. If any amount was deducted, the bank reverses it automatically.';
+    return 'Payment was not completed. If any amount was deducted, the bank reverses it automatically within 5–7 working days.';
   }
 
-  Future<void> _confirmWithBackend(
-    BuildContext context, {
+  Future<void> _confirmWithBackend({
     required String orderId,
     String? paymentId,
     String? signature,
     required bool checkoutFailed,
     String? checkoutMessage,
+    bool isCancellation = false,
   }) async {
     if (orderId.trim().isEmpty) {
       _showPaymentMessage(
-        context,
         checkoutMessage ??
             'We could not find this payment. Please try again. If money was deducted, contact support.',
         isError: true,
@@ -358,7 +462,9 @@ class SubscriptionController extends Notifier<bool> {
       return;
     }
 
-    state = true;
+    if (!isCancellation) {
+      state = true;
+    }
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'us-central1')
           .httpsCallable('confirmRazorpayPayment');
@@ -371,21 +477,24 @@ class SubscriptionController extends Notifier<bool> {
       final data = response.data is Map
           ? Map<String, dynamic>.from(response.data as Map)
           : <String, dynamic>{};
-      if (!context.mounted) return;
-      _applyPaymentDecision(
-        context,
-        data,
-        checkoutMessage: checkoutMessage,
-      );
+      final validContext = _getValidContext();
+      if (validContext != null && validContext.mounted) {
+        _applyPaymentDecision(
+          validContext,
+          data,
+          checkoutMessage: checkoutMessage,
+          isCancellation: isCancellation,
+        );
+      }
     } catch (e) {
       debugPrint('[SubscriptionController] confirmRazorpayPayment error: $e');
-      final fallback = checkoutFailed
-          ? (checkoutMessage ??
-              'Payment could not be confirmed. If money was deducted, a refund will be issued within 5–7 working days.')
-          : 'We could not confirm this payment with our server. If money was deducted, your subscription will be activated automatically, or a refund will be issued within 5–7 working days. Transaction: $orderId';
-      ref.read(paymentNoticeProvider.notifier).setNotice(fallback);
-      if (context.mounted) {
-        _showPaymentMessage(context, fallback, isError: true);
+      if (!isCancellation) {
+        final fallback = checkoutFailed
+            ? (checkoutMessage ??
+                'Payment could not be confirmed. If money was deducted, a refund will be issued within 5–7 working days.')
+            : 'We could not confirm this payment with our server. If money was deducted, your subscription will be activated automatically, or a refund will be issued within 5–7 working days. Transaction: $orderId';
+        ref.read(paymentNoticeProvider.notifier).setNotice(fallback);
+        _showPaymentMessage(fallback, isError: true);
       }
     } finally {
       state = false;
@@ -396,6 +505,7 @@ class SubscriptionController extends Notifier<bool> {
     BuildContext context,
     Map<String, dynamic> data, {
     String? checkoutMessage,
+    bool isCancellation = false,
   }) {
     final outcome = data['outcome']?.toString() ?? '';
     final message = data['message']?.toString() ?? '';
@@ -406,12 +516,23 @@ class SubscriptionController extends Notifier<bool> {
     if (active) {
       ref.read(paymentNoticeProvider.notifier).setNotice(null);
       _showPaymentMessage(
-        context,
         message.isNotEmpty
             ? message
             : 'Payment confirmed. Your subscription is active.',
+        context: context,
         isError: false,
       );
+      return;
+    }
+
+    if (isCancellation) {
+      if (outcome == 'refund_pending' || outcome == 'pending') {
+        final notice = message.isNotEmpty
+            ? message
+            : 'Payment reversal is pending. If money was deducted, a refund will be issued within 5–7 working days.';
+        ref.read(paymentNoticeProvider.notifier).setNotice(notice);
+        _showPaymentMessage(notice, context: context, isError: false);
+      }
       return;
     }
 
@@ -422,16 +543,20 @@ class SubscriptionController extends Notifier<bool> {
     if (outcome == 'refund_pending' || outcome == 'pending') {
       ref.read(paymentNoticeProvider.notifier).setNotice(notice);
     }
-    _showPaymentMessage(context, notice, isError: outcome != 'pending');
+    _showPaymentMessage(notice, context: context, isError: outcome != 'pending');
   }
 
   void _showPaymentMessage(
-    BuildContext context,
     String message, {
+    BuildContext? context,
     required bool isError,
   }) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    final validContext = _getValidContext(context);
+    if (validContext == null || !validContext.mounted) {
+      debugPrint('[SubscriptionController] Payment message: $message');
+      return;
+    }
+    ScaffoldMessenger.of(validContext).showSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: isError ? Colors.red[700] : Colors.green[700],

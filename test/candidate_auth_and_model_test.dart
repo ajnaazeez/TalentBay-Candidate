@@ -4,6 +4,7 @@ import 'package:talentbay_candidate/core/utils/phone_utils.dart';
 import 'package:talentbay_candidate/features/auth/models/candidate_model.dart';
 import 'package:talentbay_candidate/features/candidate/models/profile_sections.dart';
 import 'package:talentbay_candidate/features/candidate/utils/profile_completion_calculator.dart';
+import 'package:talentbay_candidate/features/companies/models/company_model.dart';
 import 'package:talentbay_candidate/features/jobs/models/job_application_model.dart';
 
 void main() {
@@ -288,6 +289,104 @@ void main() {
         expect(plan['durationDays'], isNotNull);
         expect(plan['durationDays'], greaterThan(0));
       }
+    });
+  });
+
+  group('CompanyModel.fromMap Robustness Tests', () {
+    test('Parses full nested recruiter/company schema correctly', () {
+      final map = {
+        'id': 'comp_1',
+        'profile': {
+          'companyName': 'Google',
+          'legalName': 'Google LLC',
+          'website': 'https://google.com',
+          'logoUrl': 'https://example.com/logo.png',
+          'industry': 'Tech',
+          'sector': 'Software',
+          'companySize': '10000+',
+          'foundedYear': 1998,
+          'headquarters': {'city': 'Mountain View', 'country': 'USA'},
+        },
+        'verification': {
+          'status': 'verified',
+          'isVerified': true,
+        },
+        'stats': {
+          'totalJobs': 50,
+          'activeJobs': 12,
+          'totalApplicants': 200,
+        },
+        'createdAt': '2026-01-01T00:00:00.000',
+        'updatedAt': '2026-01-02T00:00:00.000',
+      };
+
+      final company = CompanyModel.fromMap(map, 'comp_1');
+      expect(company.id, equals('comp_1'));
+      expect(company.profile.companyName, equals('Google'));
+      expect(company.profile.logoUrl, equals('https://example.com/logo.png'));
+      expect(company.profile.foundedYear, equals(1998));
+      expect(company.verification.isVerified, isTrue);
+      expect(company.stats.totalJobs, equals(50));
+      expect(company.stats.totalApplicants, equals(200));
+      expect(company.meta.createdAt, isA<DateTime>());
+    });
+
+    test('Defensively parses flat legacy documents without nested profile map', () {
+      final flatMap = {
+        'companyName': 'Acme Corp',
+        'logoUrl': 'https://acme.com/logo.png',
+        'about': 'A great company',
+        'industry': 'Manufacturing',
+        'websiteUrl': 'https://acme.com',
+        'city': 'Kozhikode',
+        'state': 'Kerala',
+        'country': 'India',
+        'isVerified': true,
+        'foundedYear': '2015', // string instead of int
+        'totalJobs': '25', // string instead of int
+        'totalApplicants': 100.0, // double instead of int
+        'createdAt': '2026-02-01T12:00:00.000', // ISO string instead of Timestamp
+      };
+
+      final company = CompanyModel.fromMap(flatMap, 'flat_1');
+      expect(company.id, equals('flat_1'));
+      expect(company.profile.companyName, equals('Acme Corp'));
+      expect(company.profile.logoUrl, equals('https://acme.com/logo.png'));
+      expect(company.profile.about, equals('A great company'));
+      expect(company.profile.foundedYear, equals(2015));
+      expect(company.contact.city, equals('Kozhikode'));
+      expect(company.contact.state, equals('Kerala'));
+      expect(company.contact.country, equals('India'));
+      expect(company.verification.isVerified, isTrue);
+      expect(company.stats.totalJobs, equals(25));
+      expect(company.stats.totalApplicants, equals(100));
+      expect(company.meta.createdAt, isA<DateTime>());
+    });
+
+    test('Safely handles malformed and null fields without throwing exceptions', () {
+      final corruptedMap = {
+        'profile': 'not-a-map',
+        'contact': 12345,
+        'business': null,
+        'verification': false,
+        'social': ['not', 'a', 'map'],
+        'stats': 'invalid_stats',
+        'settings': 0,
+        'meta': true,
+        'createdAt': 'completely-unparseable-date',
+        'updatedAt': null,
+        'location': 'invalid_location',
+        'isActive': 'true',
+        'isDeleted': 0,
+      };
+
+      // Must not throw any TypeError or FormatException
+      final company = CompanyModel.fromMap(corruptedMap, 'corrupt_1');
+      expect(company.id, equals('corrupt_1'));
+      expect(company.profile.companyName, equals(''));
+      expect(company.verification.isVerified, isFalse);
+      expect(company.stats.totalJobs, equals(0));
+      expect(company.meta.createdAt, isA<DateTime>());
     });
   });
 }

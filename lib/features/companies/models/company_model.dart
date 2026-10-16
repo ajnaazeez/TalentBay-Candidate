@@ -38,16 +38,73 @@ class CompanyModel {
   }
 
   factory CompanyModel.fromMap(Map<String, dynamic> map, String id) {
+    Map<String, dynamic> safeMap(dynamic val) {
+      if (val is Map<String, dynamic>) return val;
+      if (val is Map) return Map<String, dynamic>.from(val);
+      return <String, dynamic>{};
+    }
+
+    final profileMap = safeMap(map['profile']);
+    final contactMap = safeMap(map['contact']);
+    final businessMap = safeMap(map['business']);
+    final verificationMap = safeMap(map['verification']);
+    final socialMap = safeMap(map['social']);
+    final statsMap = safeMap(map['stats']);
+    final settingsMap = safeMap(map['settings']);
+    final metaMap = safeMap(map['meta']);
+
+    // Fallbacks if document is flat or mixed:
+    if (profileMap.isEmpty && map.containsKey('companyName')) {
+      profileMap['companyName'] = map['companyName'];
+      profileMap['logoUrl'] = map['logoUrl'] ?? map['companyLogoUrl'];
+      profileMap['coverImageUrl'] = map['coverImageUrl'];
+      profileMap['tagline'] = map['tagline'];
+      profileMap['about'] = map['about'] ?? map['description'];
+      profileMap['industry'] = map['industry'];
+      profileMap['companyType'] = map['companyType'];
+      profileMap['foundedYear'] = map['foundedYear'];
+      profileMap['companySize'] = map['companySize'];
+      profileMap['website'] = map['website'] ?? map['websiteUrl'];
+    }
+
+    if (contactMap.isEmpty) {
+      if (map.containsKey('city')) contactMap['city'] = map['city'];
+      if (map.containsKey('state')) contactMap['state'] = map['state'];
+      if (map.containsKey('country')) contactMap['country'] = map['country'];
+      if (map.containsKey('addressLine')) contactMap['addressLine'] = map['addressLine'] ?? map['address'];
+      if (map.containsKey('email')) contactMap['email'] = map['email'];
+      if (map.containsKey('phone')) contactMap['phone'] = map['phone'] ?? map['phoneNumber'];
+      if (map.containsKey('location')) contactMap['location'] = map['location'];
+    }
+
+    if (verificationMap.isEmpty && map.containsKey('isVerified')) {
+      verificationMap['isVerified'] = map['isVerified'];
+      verificationMap['status'] = map['verificationStatus'] ?? (map['isVerified'] == true ? 'verified' : 'unverified');
+    }
+
+    if (statsMap.isEmpty) {
+      if (map.containsKey('totalJobs')) statsMap['totalJobs'] = map['totalJobs'];
+      if (map.containsKey('activeJobs')) statsMap['activeJobs'] = map['activeJobs'];
+      if (map.containsKey('totalApplicants')) statsMap['totalApplicants'] = map['totalApplicants'];
+    }
+
+    if (metaMap.isEmpty) {
+      if (map.containsKey('createdAt')) metaMap['createdAt'] = map['createdAt'];
+      if (map.containsKey('updatedAt')) metaMap['updatedAt'] = map['updatedAt'];
+      if (map.containsKey('isActive')) metaMap['isActive'] = map['isActive'];
+      if (map.containsKey('createdBy')) metaMap['createdBy'] = map['createdBy'];
+    }
+
     return CompanyModel(
       id: id,
-      profile: CompanyProfile.fromMap(map['profile'] ?? {}),
-      contact: CompanyContact.fromMap(map['contact'] ?? {}),
-      business: CompanyBusiness.fromMap(map['business'] ?? {}),
-      verification: CompanyVerification.fromMap(map['verification'] ?? {}),
-      social: CompanySocial.fromMap(map['social'] ?? {}),
-      stats: CompanyStats.fromMap(map['stats'] ?? {}),
-      settings: CompanySettings.fromMap(map['settings'] ?? {}),
-      meta: CompanyMeta.fromMap(map['meta'] ?? {}),
+      profile: CompanyProfile.fromMap(profileMap),
+      contact: CompanyContact.fromMap(contactMap),
+      business: CompanyBusiness.fromMap(businessMap),
+      verification: CompanyVerification.fromMap(verificationMap),
+      social: CompanySocial.fromMap(socialMap),
+      stats: CompanyStats.fromMap(statsMap),
+      settings: CompanySettings.fromMap(settingsMap),
+      meta: CompanyMeta.fromMap(metaMap),
     );
   }
 
@@ -117,17 +174,24 @@ class CompanyProfile {
   }
 
   factory CompanyProfile.fromMap(Map<String, dynamic> map) {
+    int? parseFoundedYear(dynamic val) {
+      if (val is int) return val;
+      if (val is num) return val.toInt();
+      if (val is String) return int.tryParse(val);
+      return null;
+    }
+
     return CompanyProfile(
-      companyName: map['companyName'] ?? '',
-      logoUrl: map['logoUrl'] ?? '',
-      coverImageUrl: map['coverImageUrl'] ?? '',
-      tagline: map['tagline'] ?? '',
-      about: map['about'] ?? '',
-      industry: map['industry'] ?? '',
-      companyType: map['companyType'] ?? '',
-      foundedYear: map['foundedYear'],
-      companySize: map['companySize'] ?? '',
-      website: map['website'] ?? '',
+      companyName: map['companyName']?.toString() ?? '',
+      logoUrl: map['logoUrl']?.toString() ?? '',
+      coverImageUrl: map['coverImageUrl']?.toString() ?? '',
+      tagline: map['tagline']?.toString() ?? '',
+      about: map['about']?.toString() ?? '',
+      industry: map['industry']?.toString() ?? '',
+      companyType: map['companyType']?.toString() ?? '',
+      foundedYear: parseFoundedYear(map['foundedYear']),
+      companySize: map['companySize']?.toString() ?? '',
+      website: map['website']?.toString() ?? '',
     );
   }
 
@@ -196,18 +260,29 @@ class CompanyContact {
   }
 
   factory CompanyContact.fromMap(Map<String, dynamic> map) {
+    List<CompanyAddress> parseOffices(dynamic val) {
+      if (val is! List) return const [];
+      final offices = <CompanyAddress>[];
+      for (final item in val) {
+        if (item is Map) {
+          try {
+            offices.add(CompanyAddress.fromMap(Map<String, dynamic>.from(item)));
+          } catch (_) {}
+        }
+      }
+      return offices;
+    }
+
     return CompanyContact(
-      email: map['email'] ?? '',
-      phone: map['phone'] ?? '',
-      addressLine: map['addressLine'] ?? '',
-      city: map['city'] ?? '',
-      state: map['state'] ?? '',
-      country: map['country'] ?? '',
-      postalCode: map['postalCode'] ?? '',
-      location: map['location'],
-      additionalOffices: List<CompanyAddress>.from(
-        (map['additionalOffices'] ?? []).map((e) => CompanyAddress.fromMap(e)),
-      ),
+      email: map['email']?.toString() ?? '',
+      phone: map['phone']?.toString() ?? '',
+      addressLine: map['addressLine']?.toString() ?? '',
+      city: map['city']?.toString() ?? '',
+      state: map['state']?.toString() ?? '',
+      country: map['country']?.toString() ?? '',
+      postalCode: map['postalCode']?.toString() ?? '',
+      location: map['location'] is GeoPoint ? map['location'] as GeoPoint : null,
+      additionalOffices: parseOffices(map['additionalOffices']),
     );
   }
 
@@ -302,13 +377,22 @@ class CompanyBusiness {
   }
 
   factory CompanyBusiness.fromMap(Map<String, dynamic> map) {
+    List<String> parseStrings(dynamic val) {
+      if (val is! List) return const [];
+      return val
+          .map((e) => e?.toString() ?? '')
+          .where((s) => s.isNotEmpty)
+          .toList();
+    }
+
     return CompanyBusiness(
-      registrationNumber: map['registrationNumber'] ?? '',
-      gstOrTaxId: map['gstOrTaxId'] ?? '',
-      ownershipType: map['ownershipType'] ?? '',
-      operatingHours: map['operatingHours'] ?? '',
-      remoteFriendly: map['remoteFriendly'] ?? false,
-      hiringRegions: List<String>.from(map['hiringRegions'] ?? []),
+      registrationNumber: map['registrationNumber']?.toString() ?? '',
+      gstOrTaxId: map['gstOrTaxId']?.toString() ?? '',
+      ownershipType: map['ownershipType']?.toString() ?? '',
+      operatingHours: map['operatingHours']?.toString() ?? '',
+      remoteFriendly: map['remoteFriendly'] == true ||
+          map['remoteFriendly']?.toString().toLowerCase() == 'true',
+      hiringRegions: parseStrings(map['hiringRegions']),
     );
   }
 
@@ -357,12 +441,28 @@ class CompanyVerification {
   }
 
   factory CompanyVerification.fromMap(Map<String, dynamic> map) {
+    DateTime? parseDate(dynamic val) {
+      if (val is Timestamp) return val.toDate();
+      if (val is String) return DateTime.tryParse(val);
+      if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
+      return null;
+    }
+
+    List<String> parseStrings(dynamic val) {
+      if (val is! List) return const [];
+      return val
+          .map((e) => e?.toString() ?? '')
+          .where((s) => s.isNotEmpty)
+          .toList();
+    }
+
     return CompanyVerification(
-      isVerified: map['isVerified'] ?? false,
-      verifiedBy: map['verifiedBy'] ?? '',
-      verifiedAt: (map['verifiedAt'] as Timestamp?)?.toDate(),
-      documents: List<String>.from(map['documents'] ?? []),
-      status: map['status'] ?? 'pending',
+      isVerified: map['isVerified'] == true ||
+          map['isVerified']?.toString().toLowerCase() == 'true',
+      verifiedBy: map['verifiedBy']?.toString() ?? '',
+      verifiedAt: parseDate(map['verifiedAt']),
+      documents: parseStrings(map['documents']),
+      status: map['status']?.toString() ?? 'pending',
     );
   }
 
@@ -410,11 +510,11 @@ class CompanySocial {
 
   factory CompanySocial.fromMap(Map<String, dynamic> map) {
     return CompanySocial(
-      linkedin: map['linkedin'] ?? '',
-      twitter: map['twitter'] ?? '',
-      facebook: map['facebook'] ?? '',
-      instagram: map['instagram'] ?? '',
-      github: map['github'] ?? '',
+      linkedin: map['linkedin']?.toString() ?? '',
+      twitter: map['twitter']?.toString() ?? '',
+      facebook: map['facebook']?.toString() ?? '',
+      instagram: map['instagram']?.toString() ?? '',
+      github: map['github']?.toString() ?? '',
     );
   }
 
@@ -458,11 +558,18 @@ class CompanyStats {
   }
 
   factory CompanyStats.fromMap(Map<String, dynamic> map) {
+    int parseInt(dynamic val) {
+      if (val is int) return val;
+      if (val is num) return val.toInt();
+      if (val is String) return int.tryParse(val) ?? 0;
+      return 0;
+    }
+
     return CompanyStats(
-      totalJobs: map['totalJobs'] ?? 0,
-      activeJobs: map['activeJobs'] ?? 0,
-      totalApplicants: map['totalApplicants'] ?? 0,
-      profileViews: map['profileViews'] ?? 0,
+      totalJobs: parseInt(map['totalJobs']),
+      activeJobs: parseInt(map['activeJobs']),
+      totalApplicants: parseInt(map['totalApplicants']),
+      profileViews: parseInt(map['profileViews']),
     );
   }
 }
@@ -490,11 +597,20 @@ class CompanySettings {
   }
 
   factory CompanySettings.fromMap(Map<String, dynamic> map) {
+    bool parseBool(dynamic val, bool fallback) {
+      if (val is bool) return val;
+      if (val is String) {
+        if (val.toLowerCase() == 'true') return true;
+        if (val.toLowerCase() == 'false') return false;
+      }
+      return fallback;
+    }
+
     return CompanySettings(
-      allowPublicView: map['allowPublicView'] ?? true,
-      allowMessages: map['allowMessages'] ?? true,
-      showContactInfo: map['showContactInfo'] ?? true,
-      autoApproveJobs: map['autoApproveJobs'] ?? false,
+      allowPublicView: parseBool(map['allowPublicView'], true),
+      allowMessages: parseBool(map['allowMessages'], true),
+      showContactInfo: parseBool(map['showContactInfo'], true),
+      autoApproveJobs: parseBool(map['autoApproveJobs'], false),
     );
   }
 
@@ -539,12 +655,28 @@ class CompanyMeta {
   }
 
   factory CompanyMeta.fromMap(Map<String, dynamic> map) {
+    DateTime parseDate(dynamic val) {
+      if (val is Timestamp) return val.toDate();
+      if (val is String) return DateTime.tryParse(val) ?? DateTime.now();
+      if (val is int) return DateTime.fromMillisecondsSinceEpoch(val);
+      return DateTime.now();
+    }
+
+    bool parseBool(dynamic val, bool fallback) {
+      if (val is bool) return val;
+      if (val is String) {
+        if (val.toLowerCase() == 'true') return true;
+        if (val.toLowerCase() == 'false') return false;
+      }
+      return fallback;
+    }
+
     return CompanyMeta(
-      createdBy: map['createdBy'] ?? '',
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      isActive: map['isActive'] ?? true,
-      isBlocked: map['isBlocked'] ?? false,
+      createdBy: map['createdBy']?.toString() ?? '',
+      createdAt: parseDate(map['createdAt']),
+      updatedAt: parseDate(map['updatedAt']),
+      isActive: parseBool(map['isActive'], true),
+      isBlocked: parseBool(map['isBlocked'], false),
     );
   }
 

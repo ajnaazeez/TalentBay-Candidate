@@ -281,16 +281,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     _buildActionTile(
                       context,
                       isDark,
-                      title: 'Call Support',
-                      subtitle: '+91 99466 62410',
-                      icon: Icons.phone_outlined,
-                      iconColor: const Color(0xFF3B82F6),
-                      onTap: () => _launchPhone('+91 99466 62410'),
-                    ),
-                    const SizedBox(height: 8),
-                    _buildActionTile(
-                      context,
-                      isDark,
                       title: 'Contact Support',
                       subtitle: 'info@waqtixllp.com',
                       icon: Icons.email_outlined,
@@ -780,28 +770,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Could not launch email client')),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
-    }
-  }
-
-  Future<void> _launchPhone(String phoneNumber) async {
-    // Remove spaces for tel URI
-    final cleanNumber = phoneNumber.replaceAll(' ', '');
-    final Uri phoneUri = Uri(scheme: 'tel', path: cleanNumber);
-
-    try {
-      if (!await launchUrl(phoneUri, mode: LaunchMode.externalApplication)) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not launch dialer')),
           );
         }
       }

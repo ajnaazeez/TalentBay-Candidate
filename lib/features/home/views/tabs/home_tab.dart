@@ -31,6 +31,7 @@ class HomeTab extends ConsumerStatefulWidget {
 class _HomeTabState extends ConsumerState<HomeTab>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
+  late Stream<List<CompanyModel>> _companiesStream;
   String _selectedCategory = 'All';
   static bool _hasShownTrialPrompt = false;
 
@@ -64,6 +65,7 @@ class _HomeTabState extends ConsumerState<HomeTab>
   @override
   void initState() {
     super.initState();
+    _companiesStream = ref.read(companyRepositoryProvider).getCompanies();
     _loadSearchHistory();
     _animationController = AnimationController(
       vsync: this,
@@ -81,7 +83,6 @@ class _HomeTabState extends ConsumerState<HomeTab>
   Widget build(BuildContext context) {
     final candidateState = ref.watch(candidateControllerProvider);
     final jobRepo = ref.watch(jobRepositoryProvider);
-    final companyRepo = ref.watch(companyRepositoryProvider);
     final notificationsAsync = ref.watch(userNotificationsProvider);
     
     final unreadCount = notificationsAsync.value?.where((n) => n.status == 'Unread').length ?? 0;
@@ -622,19 +623,39 @@ class _HomeTabState extends ConsumerState<HomeTab>
                   ),
                   const SizedBox(height: 24),
                   StreamBuilder<List<CompanyModel>>(
-                    stream: companyRepo.getCompanies(),
+                    stream: _companiesStream,
                     builder: (context, snapshot) {
-                      if (!snapshot.hasData) {
-                        return const Center(
+                      if (snapshot.connectionState == ConnectionState.waiting &&
+                          !snapshot.hasData) {
+                        return Center(
                           child: Padding(
-                            padding: EdgeInsets.all(20),
+                            padding: const EdgeInsets.all(20),
                             child: CircularProgressIndicator(
-                              color: Colors.black,
+                              color: textColor,
                             ),
                           ),
                         );
                       }
-                      final companies = snapshot.data!;
+
+                      if (snapshot.hasError) {
+                        debugPrint(
+                          '[HomeTab] Error loading companies: ${snapshot.error}',
+                        );
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Text(
+                              'No companies available',
+                              style: TextStyle(
+                                color: subTextColor,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+
+                      final companies = snapshot.data ?? [];
                       
                       final sortedCompanies = List<CompanyModel>.from(companies);
                       sortedCompanies.sort((a, b) => b.stats.totalApplicants.compareTo(a.stats.totalApplicants));

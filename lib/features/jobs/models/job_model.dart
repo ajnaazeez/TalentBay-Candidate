@@ -179,11 +179,17 @@ class JobModel {
 
   factory JobModel.fromMap(
     Map<String, dynamic> map, {
+    String? documentId,
     String? companyName,
     String? companyLogoUrl,
   }) {
+    final rawJobId = map['jobId']?.toString().trim();
+    final effectiveJobId = (rawJobId != null && rawJobId.isNotEmpty)
+        ? rawJobId
+        : (documentId ?? '');
+
     return JobModel(
-      jobId: map['jobId'] ?? '',
+      jobId: effectiveJobId,
       companyId: map['companyId'] ?? '',
       recruiterId: map['recruiterId'] ?? '',
       roleId: map['roleId'] ?? '',

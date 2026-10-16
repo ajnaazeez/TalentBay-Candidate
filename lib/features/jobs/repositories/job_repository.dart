@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/job_model.dart';
 import '../models/job_application_model.dart';
@@ -22,7 +23,7 @@ class JobRepository {
         .asyncMap((snapshot) async {
           final jobs = <JobModel>[];
           for (final doc in snapshot.docs) {
-            var job = JobModel.fromMap(doc.data());
+            var job = JobModel.fromMap(doc.data(), documentId: doc.id);
 
             // Enrich with Company Info
             try {
@@ -44,7 +45,7 @@ class JobRepository {
                 }
               }
             } catch (e) {
-              print('Error fetching company info for job ${job.jobId}: $e');
+              debugPrint('Error fetching company info for job ${job.jobId}: $e');
             }
             jobs.add(job);
           }
@@ -94,7 +95,7 @@ class JobRepository {
     final doc = await _firestore.collection('jobs').doc(jobId).get();
     if (!doc.exists) return null;
 
-    var job = JobModel.fromMap(doc.data()!);
+    var job = JobModel.fromMap(doc.data()!, documentId: doc.id);
 
     // Fetch company info
     try {
@@ -165,17 +166,18 @@ class JobRepository {
 
   // Fetch saved jobs by IDs
   Stream<List<JobModel>> getSavedJobs(List<String> jobIds) {
-    if (jobIds.isEmpty) {
+    final cleanIds = jobIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+
+    if (cleanIds.isEmpty) {
       return Stream.value(<JobModel>[]).asBroadcastStream();
     }
 
-    // Firestore 'whereIn' is limited to 10 items.
-    // For now, handling up to 10 items. In a real app, we'd need to batch this.
-    // Or we could fetch one by one, but that's expensive.
-    // A better approach for large lists is to fetch all active jobs and filter client side
-    // if the total jobs count isn't huge, or pagination.
-    // For this task, assuming < 10 saved jobs is a reasonable constraint or we take latest 10.
-    final idsToFetch = jobIds.length > 10 ? jobIds.sublist(0, 10) : jobIds;
+    // Firestore 'whereIn' supports up to 30 items
+    final idsToFetch = cleanIds.length > 30 ? cleanIds.sublist(0, 30) : cleanIds;
 
     return _firestore
         .collection('jobs')
@@ -184,14 +186,19 @@ class JobRepository {
         .asyncMap((snapshot) async {
           final jobs = <JobModel>[];
           for (final doc in snapshot.docs) {
-            var job = JobModel.fromMap(doc.data());
+            var job = JobModel.fromMap(doc.data(), documentId: doc.id);
 
             // Filter out closed jobs
             if (job.status == 'closed') {
               continue;
             }
 
-            // Enrich with company info (duplicate logic from below - could extract)
+            // Strictly ensure the returned job matches one of the requested saved IDs
+            if (!cleanIds.contains(job.jobId) && !cleanIds.contains(doc.id)) {
+              continue;
+            }
+
+            // Enrich with company info
             try {
               if (job.companyId.isNotEmpty) {
                 final companyDoc = await _firestore

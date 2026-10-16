@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -37,7 +39,6 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
   @override
   Widget build(BuildContext context) {
     final candidateState = ref.watch(candidateControllerProvider);
-    final jobRepo = ref.watch(jobRepositoryProvider);
 
     // Dynamic Theme
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -225,9 +226,9 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                 child: TabBarView(
                   controller: _tabController,
                   children: [
-                    _buildAppliedJobs(jobRepo, candidateId),
-                    _buildSavedJobs(jobRepo, savedJobIds),
-                    _buildAcceptedJobs(jobRepo, candidateId),
+                    _AppliedJobsView(candidateId: candidateId),
+                    _SavedJobsView(savedJobIds: savedJobIds),
+                    _AcceptedJobsView(candidateId: candidateId),
                   ],
                 ),
               ),
@@ -237,16 +238,128 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
       },
     );
   }
+}
 
-  Widget _buildAppliedJobs(JobRepository jobRepo, String candidateId) {
+class _AppliedJobsView extends ConsumerStatefulWidget {
+  final String candidateId;
+  const _AppliedJobsView({required this.candidateId});
+
+  @override
+  ConsumerState<_AppliedJobsView> createState() => _AppliedJobsViewState();
+}
+
+class _AppliedJobsViewState extends ConsumerState<_AppliedJobsView>
+    with AutomaticKeepAliveClientMixin {
+  late Stream<List<JobApplicationModel>> _stream;
+  Timer? _timeoutTimer;
+  bool _isSlowConnection = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStream();
+  }
+
+  void _initStream() {
+    _stream = ref
+        .read(jobRepositoryProvider)
+        .getCandidateApplications(widget.candidateId);
+    _startTimeoutTimer();
+  }
+
+  void _startTimeoutTimer() {
+    _timeoutTimer?.cancel();
+    _isSlowConnection = false;
+    _timeoutTimer = Timer(const Duration(seconds: 12), () {
+      if (mounted) {
+        setState(() {
+          _isSlowConnection = true;
+        });
+      }
+    });
+  }
+
+  void _retry() {
+    setState(() {
+      _initStream();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _AppliedJobsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.candidateId != widget.candidateId) {
+      setState(() {
+        _initStream();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final jobRepo = ref.read(jobRepositoryProvider);
+
     return StreamBuilder<List<JobApplicationModel>>(
-      stream: jobRepo.getCandidateApplications(candidateId),
+      stream: _stream,
       builder: (context, snapshot) {
         final isDark = Theme.of(context).brightness == Brightness.dark;
         final textColor = isDark ? Colors.white : Colors.black;
         final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
 
+        if (snapshot.hasData && _timeoutTimer?.isActive == true) {
+          _timeoutTimer?.cancel();
+        }
+
         if (snapshot.connectionState == ConnectionState.waiting) {
+          if (_isSlowConnection) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: textColor),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Taking longer than expected...',
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Check your internet connection or tap retry.',
+                      style: TextStyle(color: subTextColor, fontSize: 12),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: _retry,
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('RETRY'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryBrand,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
           return Center(child: CircularProgressIndicator(color: textColor));
         }
 
@@ -259,7 +372,10 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                 const SizedBox(height: 12),
                 Text(
                   'Error loading applications',
-                  style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Padding(
@@ -268,6 +384,17 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                     '${snapshot.error}',
                     style: TextStyle(color: subTextColor, fontSize: 12),
                     textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: _retry,
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('RETRY'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryBrand,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
                   ),
                 ),
               ],
@@ -358,16 +485,16 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                               ),
                               child:
                                   job.companyLogoUrl != null &&
-                                      job.companyLogoUrl!.isNotEmpty
-                                  ? Image.network(
-                                      job.companyLogoUrl!,
-                                      fit: BoxFit.cover,
-                                    )
-                                  : Icon(
-                                      Icons.business,
-                                      color: textColor,
-                                      size: 24,
-                                    ),
+                                          job.companyLogoUrl!.isNotEmpty
+                                      ? Image.network(
+                                          job.companyLogoUrl!,
+                                          fit: BoxFit.cover,
+                                        )
+                                      : Icon(
+                                          Icons.business,
+                                          color: textColor,
+                                          size: 24,
+                                        ),
                             ),
                             const SizedBox(width: 16),
                             Expanded(
@@ -433,7 +560,7 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                                 'shortlisted')
                               InkWell(
                                 onTap: () async {
-                                  final currentCandidateId = candidateId;
+                                  final currentCandidateId = widget.candidateId;
                                   final recruiterId = job.recruiterId;
 
                                   if (recruiterId.isEmpty) {
@@ -523,16 +650,128 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
       },
     );
   }
+}
 
-  Widget _buildAcceptedJobs(JobRepository jobRepo, String candidateId) {
+class _AcceptedJobsView extends ConsumerStatefulWidget {
+  final String candidateId;
+  const _AcceptedJobsView({required this.candidateId});
+
+  @override
+  ConsumerState<_AcceptedJobsView> createState() => _AcceptedJobsViewState();
+}
+
+class _AcceptedJobsViewState extends ConsumerState<_AcceptedJobsView>
+    with AutomaticKeepAliveClientMixin {
+  late Stream<List<JobApplicationModel>> _stream;
+  Timer? _timeoutTimer;
+  bool _isSlowConnection = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStream();
+  }
+
+  void _initStream() {
+    _stream = ref
+        .read(jobRepositoryProvider)
+        .getCandidateApplications(widget.candidateId);
+    _startTimeoutTimer();
+  }
+
+  void _startTimeoutTimer() {
+    _timeoutTimer?.cancel();
+    _isSlowConnection = false;
+    _timeoutTimer = Timer(const Duration(seconds: 12), () {
+      if (mounted) {
+        setState(() {
+          _isSlowConnection = true;
+        });
+      }
+    });
+  }
+
+  void _retry() {
+    setState(() {
+      _initStream();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _AcceptedJobsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.candidateId != widget.candidateId) {
+      setState(() {
+        _initStream();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final jobRepo = ref.read(jobRepositoryProvider);
+
     return StreamBuilder<List<JobApplicationModel>>(
-      stream: jobRepo.getCandidateApplications(candidateId),
+      stream: _stream,
       builder: (context, snapshot) {
         final isDark = Theme.of(context).brightness == Brightness.dark;
         final textColor = isDark ? Colors.white : Colors.black;
         final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
 
+        if (snapshot.hasData && _timeoutTimer?.isActive == true) {
+          _timeoutTimer?.cancel();
+        }
+
         if (snapshot.connectionState == ConnectionState.waiting) {
+          if (_isSlowConnection) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: textColor),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Taking longer than expected...',
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Check your internet connection or tap retry.',
+                      style: TextStyle(color: subTextColor, fontSize: 12),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: _retry,
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('RETRY'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryBrand,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
           return Center(child: CircularProgressIndicator(color: textColor));
         }
 
@@ -545,7 +784,10 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                 const SizedBox(height: 12),
                 Text(
                   'Error loading accepted jobs',
-                  style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Padding(
@@ -554,6 +796,17 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                     '${snapshot.error}',
                     style: TextStyle(color: subTextColor, fontSize: 12),
                     textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: _retry,
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('RETRY'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryBrand,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
                   ),
                 ),
               ],
@@ -645,16 +898,16 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                               ),
                               child:
                                   job.companyLogoUrl != null &&
-                                      job.companyLogoUrl!.isNotEmpty
-                                  ? Image.network(
-                                      job.companyLogoUrl!,
-                                      fit: BoxFit.cover,
-                                    )
-                                  : Icon(
-                                      Icons.business,
-                                      color: textColor,
-                                      size: 24,
-                                    ),
+                                          job.companyLogoUrl!.isNotEmpty
+                                      ? Image.network(
+                                          job.companyLogoUrl!,
+                                          fit: BoxFit.cover,
+                                        )
+                                      : Icon(
+                                          Icons.business,
+                                          color: textColor,
+                                          size: 24,
+                                        ),
                             ),
                             const SizedBox(width: 16),
                             Expanded(
@@ -741,16 +994,176 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
       },
     );
   }
+}
 
-  Widget _buildSavedJobs(JobRepository jobRepo, List<String> savedIds) {
+class _SavedJobsView extends ConsumerStatefulWidget {
+  final List<String> savedJobIds;
+  const _SavedJobsView({required this.savedJobIds});
+
+  @override
+  ConsumerState<_SavedJobsView> createState() => _SavedJobsViewState();
+}
+
+class _SavedJobsViewState extends ConsumerState<_SavedJobsView>
+    with AutomaticKeepAliveClientMixin {
+  late Stream<List<JobModel>> _stream;
+  Timer? _timeoutTimer;
+  bool _isSlowConnection = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStream();
+  }
+
+  void _initStream() {
+    _stream = ref.read(jobRepositoryProvider).getSavedJobs(widget.savedJobIds);
+    _startTimeoutTimer();
+  }
+
+  void _startTimeoutTimer() {
+    _timeoutTimer?.cancel();
+    _isSlowConnection = false;
+    _timeoutTimer = Timer(const Duration(seconds: 12), () {
+      if (mounted) {
+        setState(() {
+          _isSlowConnection = true;
+        });
+      }
+    });
+  }
+
+  void _retry() {
+    setState(() {
+      _initStream();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _SavedJobsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!listEquals(oldWidget.savedJobIds, widget.savedJobIds)) {
+      setState(() {
+        _initStream();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
+
+  Widget _buildEmptyState({
+    required Color textColor,
+    required Color? subTextColor,
+    required bool isDark,
+  }) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.bookmark_outline,
+            size: 48,
+            color: isDark ? Colors.grey[700] : Colors.grey,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'NO SAVED JOBS',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: textColor,
+              letterSpacing: 1.0,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Save jobs to view them here',
+            style: TextStyle(fontSize: 14, color: subTextColor),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? Colors.white : Colors.black;
+    final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
+
+    // Watch candidate state for live saved-job updates
+    final candidateState = ref.watch(candidateControllerProvider);
+    final activeSavedIds = (candidateState.value?.savedJobIds ?? widget.savedJobIds)
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    // If candidate has no saved jobs, immediately show appropriate empty state
+    if (activeSavedIds.isEmpty) {
+      return _buildEmptyState(
+        textColor: textColor,
+        subTextColor: subTextColor,
+        isDark: isDark,
+      );
+    }
+
     return StreamBuilder<List<JobModel>>(
-      stream: jobRepo.getSavedJobs(savedIds),
+      stream: _stream,
       builder: (context, snapshot) {
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        final textColor = isDark ? Colors.white : Colors.black;
-        final subTextColor = isDark ? Colors.grey[400] : Colors.grey[600];
+        if (snapshot.hasData && _timeoutTimer?.isActive == true) {
+          _timeoutTimer?.cancel();
+        }
 
         if (snapshot.connectionState == ConnectionState.waiting) {
+          if (_isSlowConnection) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: textColor),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Taking longer than expected...',
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Check your internet connection or tap retry.',
+                      style: TextStyle(color: subTextColor, fontSize: 12),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: _retry,
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('RETRY'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryBrand,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
           return Center(child: CircularProgressIndicator(color: textColor));
         }
 
@@ -763,7 +1176,10 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                 const SizedBox(height: 12),
                 Text(
                   'Error loading saved jobs',
-                  style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Padding(
@@ -774,41 +1190,33 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
                     textAlign: TextAlign.center,
                   ),
                 ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: _retry,
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('RETRY'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryBrand,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                  ),
+                ),
               ],
             ),
           );
         }
 
-        final jobs = snapshot.data ?? [];
+        final allJobs = snapshot.data ?? [];
+        // Strictly filter to ensure only jobs whose ID belongs to current candidate's saved list appear
+        final jobs = allJobs
+            .where((job) => activeSavedIds.contains(job.jobId))
+            .toList();
 
         if (jobs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.bookmark_outline,
-                  size: 48,
-                  color: isDark ? Colors.grey[700] : Colors.grey,
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'NO SAVED JOBS',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    color: textColor,
-                    letterSpacing: 1.0,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Save jobs to view them here',
-                  style: TextStyle(fontSize: 14, color: subTextColor),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
+          return _buildEmptyState(
+            textColor: textColor,
+            subTextColor: subTextColor,
+            isDark: isDark,
           );
         }
 
@@ -825,49 +1233,43 @@ class _ActivityTabState extends ConsumerState<ActivityTab>
       },
     );
   }
+}
 
-  Widget _buildStatusChip(String status) {
-    Color color;
-    Color
-    bgColor; // Kept for logic structure, but we might use outlines or just text
-    String label = status.toUpperCase();
+Widget _buildStatusChip(String status) {
+  Color color;
+  String label = status.toUpperCase();
 
-    switch (status.toLowerCase()) {
-      case 'selected':
-      case 'hired':
-        color = const Color(0xFF10B981); // Green
-        bgColor = const Color(0xFFD1FAE5);
-        break;
-      case 'rejected':
-        color = Colors.red;
-        bgColor = const Color(0xFFFEE2E2);
-        break;
-      case 'interviewing':
-      case 'interview':
-        color = Colors.orange;
-        bgColor = const Color(0xFFFEF3C7);
-        break;
-      default:
-        color = Colors.lightBlue;
-        bgColor = Colors.grey[200]!;
-    }
+  switch (status.toLowerCase()) {
+    case 'selected':
+    case 'hired':
+      color = const Color(0xFF10B981); // Green
+      break;
+    case 'rejected':
+      color = Colors.red;
+      break;
+    case 'interviewing':
+    case 'interview':
+      color = Colors.orange;
+      break;
+    default:
+      color = Colors.lightBlue;
+  }
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(border: Border.all(color: color)),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0.5,
-        ),
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(border: Border.all(color: color)),
+    child: Text(
+      label,
+      style: TextStyle(
+        color: color,
+        fontSize: 10,
+        fontWeight: FontWeight.w900,
+        letterSpacing: 0.5,
       ),
-    );
-  }
+    ),
+  );
+}
 
-  String _formatDate(DateTime date) {
-    return '${date.day}/${date.month}/${date.year}';
-  }
+String _formatDate(DateTime date) {
+  return '${date.day}/${date.month}/${date.year}';
 }

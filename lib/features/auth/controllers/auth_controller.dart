@@ -202,10 +202,19 @@ class AuthController extends AsyncNotifier<void> {
     _holdNavigation(true);
     state = const AsyncValue.loading();
 
+    final totalSw = Stopwatch()..start();
+    final stepSw = Stopwatch()..start();
+
     try {
       await _authRepository.signInWithPhoneCredential(credential);
+      debugPrint('[OTP_TIMING] Step 1 (signInWithPhoneCredential): ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+
       final tempUser = FirebaseAuth.instance.currentUser;
-      final idToken = await tempUser?.getIdToken(true);
+      final idToken = await tempUser?.getIdToken();
+      debugPrint('[OTP_TIMING] Step 2 (getIdToken): ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+
       if (idToken == null || idToken.isEmpty) {
         throw FirebaseAuthException(
           code: 'internal',
@@ -214,6 +223,9 @@ class AuthController extends AsyncNotifier<void> {
       }
 
       final result = await _authRepository.loginWithPhoneOtp(idToken);
+      debugPrint('[OTP_TIMING] Step 3 (loginWithPhoneOtp Cloud Function): ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+
       final customToken = result['customToken']?.toString() ?? '';
       if (customToken.isEmpty) {
         throw FirebaseAuthException(
@@ -222,6 +234,8 @@ class AuthController extends AsyncNotifier<void> {
         );
       }
       await FirebaseAuth.instance.signInWithCustomToken(customToken);
+      debugPrint('[OTP_TIMING] Step 4 (signInWithCustomToken): ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
 
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
@@ -231,12 +245,15 @@ class AuthController extends AsyncNotifier<void> {
         );
       }
       await _authRepository.verifyUserRole(user);
+      debugPrint('[OTP_TIMING] Step 5 (verifyUserRole): ${stepSw.elapsedMilliseconds}ms');
+      debugPrint('[OTP_TIMING] Total OTP login duration: ${totalSw.elapsedMilliseconds}ms');
+
       state = const AsyncValue.data(null);
       if (context.mounted) {
         context.go('/home');
       }
     } catch (e, stack) {
-      debugPrint('completePhoneLogin failed: $e\n$stack');
+      debugPrint('completePhoneLogin failed after ${totalSw.elapsedMilliseconds}ms: $e\n$stack');
       try {
         await _authRepository.signOut();
       } catch (_) {}

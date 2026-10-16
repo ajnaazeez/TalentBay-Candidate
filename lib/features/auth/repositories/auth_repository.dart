@@ -38,7 +38,12 @@ class AuthRepository {
   }
 
   Future<void> verifyUserRole(User user) async {
-    final userDoc = await _firestore.collection('users').doc(user.uid).get();
+    final docSnapshots = await Future.wait([
+      _firestore.collection('users').doc(user.uid).get(),
+      _firestore.collection('candidates').doc(user.uid).get(),
+    ]);
+    final userDoc = docSnapshots[0];
+    final candidateDoc = docSnapshots[1];
 
     String? fName;
     String? lName;
@@ -64,7 +69,6 @@ class AuthRepository {
       final uLName = userDoc.data()?['lastName'] ?? lName;
 
       // If candidate user exists, ensure /candidates/{uid} document is also initialized
-      final candidateDoc = await _firestore.collection('candidates').doc(user.uid).get();
       if (!candidateDoc.exists) {
         final candidate = CandidateModel(
           uid: user.uid,
@@ -124,8 +128,7 @@ class AuthRepository {
         if (e is FirebaseAuthException && e.code == 'wrong-role') rethrow;
       }
 
-      // Check if /candidates/{uid} document already exists
-      final candidateDoc = await _firestore.collection('candidates').doc(user.uid).get();
+      // candidates/{uid} was already fetched in parallel docSnapshots
       if (!candidateDoc.exists) {
         // If not, check if an existing candidate profile was saved with this phone number
         Map<String, dynamic>? existingData;

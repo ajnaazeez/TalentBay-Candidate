@@ -37,7 +37,12 @@ void main() async {
     debugPrint('Firebase AppCheck activation warning: $e');
   }
 
-  await MobileAds.instance.initialize();
+  try {
+    final initStatus = await MobileAds.instance.initialize();
+    debugPrint('Google Mobile Ads SDK initialized: ${initStatus.adapterStatuses}');
+  } catch (e, st) {
+    debugPrint('Google Mobile Ads SDK initialization error: $e\n$st');
+  }
 
   runApp(const ProviderScope(child: MyApp()));
 }
