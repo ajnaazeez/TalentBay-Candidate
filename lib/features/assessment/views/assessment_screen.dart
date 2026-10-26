@@ -24,11 +24,13 @@ class AssessmentScreen extends ConsumerStatefulWidget {
 }
 
 class _AssessmentScreenState extends ConsumerState<AssessmentScreen> {
-  late List<AssessmentQuestion> _questions;
+  List<AssessmentQuestion> _questions = [];
   final List<int?> _userAnswers = [];
   int _currentQuestionIndex = 0;
   bool _isLoading = true;
+  bool _isGenerating = false;
   bool _isSubmitting = false;
+  String? _errorMessage;
 
   // Timer logic
   Timer? _timer;
@@ -41,7 +43,9 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen> {
       final candidate = ref.read(candidateControllerProvider).value;
       if (candidate != null && !candidate.isPremium) {
         SubscriptionPromptDialog.show(context, barrierDismissible: false).then(
-          (_) => Navigator.of(context).pop(),
+          (_) {
+            if (mounted) Navigator.of(context).pop();
+          },
         ); // Pop assessment screen after dialog
       } else {
         _loadQuestions();
@@ -56,6 +60,7 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen> {
   }
 
   void _startTimer() {
+    _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_remainingSeconds > 0) {
         setState(() {
@@ -63,41 +68,55 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen> {
         });
       } else {
         _timer?.cancel();
-        _submitAssessment();
+        _submitAssessment(isAutoSubmit: true);
       }
     });
   }
 
   Future<void> _loadQuestions() async {
+    if (_isGenerating) return;
     setState(() {
       _isLoading = true;
+      _isGenerating = true;
+      _errorMessage = null;
     });
 
     try {
       // Generate questions for the skill
-      _questions = await AssessmentService.generateQuestionsWithAI(
+      final questions = await AssessmentService.generateQuestionsWithAI(
         widget.skill,
         count: 15,
         difficulty: widget.difficulty,
       );
+      _questions = questions;
+      _userAnswers.clear();
       _userAnswers.addAll(List.filled(_questions.length, null));
+      _currentQuestionIndex = 0;
+      _remainingSeconds = 600;
 
       if (mounted) {
         setState(() {
           _isLoading = false;
+          _isGenerating = false;
+          _errorMessage = null;
         });
         _startTimer();
       }
     } catch (e) {
       if (mounted) {
+        final errorMsg = FirebaseErrorHandler.getMessage(e);
+        setState(() {
+          _isLoading = false;
+          _isGenerating = false;
+          _errorMessage = errorMsg;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Failed to load assessment: ${FirebaseErrorHandler.getMessage(e)}',
+              'Failed to load assessment: $errorMsg',
             ),
           ),
         );
-        Navigator.pop(context);
       }
     }
   }
@@ -124,9 +143,11 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen> {
     }
   }
 
-  Future<void> _submitAssessment() async {
-    // Check if all questions are answered
-    if (_userAnswers.contains(null)) {
+  Future<void> _submitAssessment({bool isAutoSubmit = false}) async {
+    if (_isSubmitting) return;
+
+    // Check if all questions are answered for manual submission
+    if (!isAutoSubmit && _userAnswers.contains(null)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please answer all questions before submitting'),
@@ -152,10 +173,13 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen> {
         throw Exception('Invalid candidate ID');
       }
 
-      // Calculate score
+      // If timer expired, treat unanswered questions (null) as -1 (incorrect)
+      final resolvedAnswers = _userAnswers.map((ans) => ans ?? -1).toList();
+
+      // Calculate score based on actual correct answers
       int score = 0;
       for (int i = 0; i < _questions.length; i++) {
-        if (_userAnswers[i] == _questions[i].correctAnswerIndex) {
+        if (resolvedAnswers[i] == _questions[i].correctAnswerIndex) {
           score++;
         }
       }
@@ -172,7 +196,7 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen> {
         candidateId: candidate.uid,
         skill: widget.skill,
         questions: _questions,
-        userAnswers: _userAnswers.cast<int>(),
+        userAnswers: resolvedAnswers,
         score: score,
         totalQuestions: _questions.length,
         completedAt: DateTime.now(),
@@ -258,6 +282,107 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen> {
                 style: TextStyle(color: Colors.grey[600], fontSize: 12),
               ),
             ],
+          ),
+        ),
+      );
+    }
+
+    if (_errorMessage != null && _questions.isEmpty) {
+      return Scaffold(
+        backgroundColor: backgroundColor,
+        appBar: AppBar(
+          title: Text(widget.skill.toUpperCase()),
+          backgroundColor: backgroundColor,
+          elevation: 0,
+          centerTitle: true,
+          titleTextStyle: TextStyle(
+            color: textColor,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.5,
+            fontSize: 16,
+          ),
+          iconTheme: IconThemeData(color: textColor),
+          leading: IconButton(
+            icon: Icon(Icons.close, color: textColor),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.error_outline_rounded,
+                  size: 48,
+                  color: Colors.orange[400],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'ASSESSMENT TEMPORARILY UNAVAILABLE',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: textColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _errorMessage ?? 'Unable to generate questions at this moment.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: _isGenerating ? null : _loadQuestions,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 32,
+                      vertical: 16,
+                    ),
+                    elevation: 0,
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.zero,
+                    ),
+                  ),
+                  child: _isGenerating
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'RETRY GENERATION',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(
+                    'GO BACK',
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );

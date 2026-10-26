@@ -154,29 +154,44 @@ class AuthController extends AsyncNotifier<void> {
     Function(PhoneAuthCredential credential)? verificationCompleted,
   }) async {
     state = const AsyncValue.loading();
-    await _authRepository.verifyPhoneNumber(
-      phoneNumber: phoneNumber,
-      verificationCompleted: verificationCompleted,
-      codeSent: (verificationId, forceResendingToken) {
-        state = const AsyncValue.data(null);
-        if (onCodeSent != null) {
-          onCodeSent(verificationId);
-        }
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('OTP Sent to $phoneNumber')));
-      },
-      verificationFailed: (e) {
-        state = AsyncValue.error(e, StackTrace.current);
-        if (context.mounted) {
-          final message = _getFriendlyPhoneAuthErrorMessage(e);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message)),
-          );
-        }
-      },
-      codeAutoRetrievalTimeout: (verificationId) {},
-    );
+    try {
+      await _authRepository.verifyPhoneNumber(
+        phoneNumber: phoneNumber,
+        verificationCompleted: verificationCompleted,
+        codeSent: (verificationId, forceResendingToken) {
+          state = const AsyncValue.data(null);
+          if (onCodeSent != null) {
+            onCodeSent(verificationId);
+          }
+          if (context.mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('OTP Sent to $phoneNumber')));
+          }
+        },
+        verificationFailed: (e) {
+          state = AsyncValue.error(e, StackTrace.current);
+          if (context.mounted) {
+            final message = _getFriendlyPhoneAuthErrorMessage(e);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(message)),
+            );
+          }
+        },
+        codeAutoRetrievalTimeout: (verificationId) {},
+      );
+    } catch (e, st) {
+      debugPrint('[AuthController] sendOtp failed synchronously: $e\n$st');
+      state = AsyncValue.error(e, st);
+      if (context.mounted) {
+        final message = e is FirebaseAuthException
+            ? _getFriendlyPhoneAuthErrorMessage(e)
+            : 'Failed to initiate phone verification: $e';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    }
   }
 
   Future<void> verifyOtp(
@@ -281,39 +296,54 @@ class AuthController extends AsyncNotifier<void> {
     // We don't want to reset the entire auth state (logout user) if this fails,
     // but AsyncNotifier state represents the *operation* state here mainly for UI feedback.
 
-    await _authRepository.verifyPhoneNumber(
-      phoneNumber: phoneNumber,
-      verificationCompleted: (credential) async {
-        // Auto-resolution on Android devices or instant verification
-        await _authRepository.updatePhoneNumber(credential);
-        state = const AsyncValue.data(null);
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Phone number updated successfully!')),
-          );
-          // Logic to close dialog can be handled in UI listener
-        }
-      },
-      codeSent: (verificationId, forceResendingToken) {
-        state = const AsyncValue.data(null);
-        if (onCodeSent != null) {
-          onCodeSent(verificationId);
-        }
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('OTP Sent to $phoneNumber')));
-      },
-      verificationFailed: (e) {
-        state = AsyncValue.error(e, StackTrace.current);
-        if (context.mounted) {
-          final message = _getFriendlyPhoneAuthErrorMessage(e);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message)),
-          );
-        }
-      },
-      codeAutoRetrievalTimeout: (verificationId) {},
-    );
+    try {
+      await _authRepository.verifyPhoneNumber(
+        phoneNumber: phoneNumber,
+        verificationCompleted: (credential) async {
+          // Auto-resolution on Android devices or instant verification
+          await _authRepository.updatePhoneNumber(credential);
+          state = const AsyncValue.data(null);
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Phone number updated successfully!')),
+            );
+            // Logic to close dialog can be handled in UI listener
+          }
+        },
+        codeSent: (verificationId, forceResendingToken) {
+          state = const AsyncValue.data(null);
+          if (onCodeSent != null) {
+            onCodeSent(verificationId);
+          }
+          if (context.mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('OTP Sent to $phoneNumber')));
+          }
+        },
+        verificationFailed: (e) {
+          state = AsyncValue.error(e, StackTrace.current);
+          if (context.mounted) {
+            final message = _getFriendlyPhoneAuthErrorMessage(e);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(message)),
+            );
+          }
+        },
+        codeAutoRetrievalTimeout: (verificationId) {},
+      );
+    } catch (e, st) {
+      debugPrint('[AuthController] sendUpdatePhoneOtp failed synchronously: $e\n$st');
+      state = AsyncValue.error(e, st);
+      if (context.mounted) {
+        final message = e is FirebaseAuthException
+            ? _getFriendlyPhoneAuthErrorMessage(e)
+            : 'Failed to initiate phone verification: $e';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    }
   }
 
   // Revised approach for sendUpdatePhoneOtp to make it usable in UI
@@ -324,29 +354,44 @@ class AuthController extends AsyncNotifier<void> {
     required Function(PhoneAuthCredential) onAutoVerified,
   }) async {
     state = const AsyncValue.loading();
-    await _authRepository.verifyPhoneNumber(
-      phoneNumber: phoneNumber,
-      verificationCompleted: (credential) {
-        onAutoVerified(credential);
-      },
-      codeSent: (verificationId, forceResendingToken) {
-        state = const AsyncValue.data(null);
-        onCodeSent(verificationId);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('OTP Sent to $phoneNumber')));
-      },
-      verificationFailed: (e) {
-        state = AsyncValue.error(e, StackTrace.current);
-        if (context.mounted) {
-          final message = _getFriendlyPhoneAuthErrorMessage(e);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message)),
-          );
-        }
-      },
-      codeAutoRetrievalTimeout: (verificationId) {},
-    );
+    try {
+      await _authRepository.verifyPhoneNumber(
+        phoneNumber: phoneNumber,
+        verificationCompleted: (credential) {
+          onAutoVerified(credential);
+        },
+        codeSent: (verificationId, forceResendingToken) {
+          state = const AsyncValue.data(null);
+          onCodeSent(verificationId);
+          if (context.mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('OTP Sent to $phoneNumber')));
+          }
+        },
+        verificationFailed: (e) {
+          state = AsyncValue.error(e, StackTrace.current);
+          if (context.mounted) {
+            final message = _getFriendlyPhoneAuthErrorMessage(e);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(message)),
+            );
+          }
+        },
+        codeAutoRetrievalTimeout: (verificationId) {},
+      );
+    } catch (e, st) {
+      debugPrint('[AuthController] sendUpdatePhoneOtpWithCallback failed synchronously: $e\n$st');
+      state = AsyncValue.error(e, st);
+      if (context.mounted) {
+        final message = e is FirebaseAuthException
+            ? _getFriendlyPhoneAuthErrorMessage(e)
+            : 'Failed to initiate phone verification: $e';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    }
   }
 
   Future<bool> verifyUpdatePhoneOtp(

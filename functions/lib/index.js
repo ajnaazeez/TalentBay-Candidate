@@ -1,6 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCareerReadinessGuidance = exports.loginWithPhoneOtp = exports.syncVerifiedPhone = exports.reconcileMyPayments = exports.confirmRazorpayPayment = exports.verifyEmailOtp = exports.sendEmailOtp = exports.verifyRazorpayPayment = exports.createRazorpayOrder = exports.deleteUserAccount = exports.getRelatedSkills = exports.generateAssessmentQuestions = exports.enhanceText = exports.bulkPostJobs = exports.generateJobDescription = exports.onMessageCreated = void 0;
+exports.sanitizeGeminiJson = sanitizeGeminiJson;
+exports.sanitizeAssessmentQuestions = sanitizeAssessmentQuestions;
+exports.classifyGeminiError = classifyGeminiError;
+exports.calculateRequestTimeout = calculateRequestTimeout;
+exports.calculateSafeDelay = calculateSafeDelay;
+exports.getCandidateModels = getCandidateModels;
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const firestore_1 = require("firebase-functions/v2/firestore");
@@ -557,7 +563,95 @@ exports.enhanceText = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region:
         throw new https_1.HttpsError("internal", "An error occurred while enhancing text.");
     }
 });
-exports.generateAssessmentQuestions = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region: "us-central1" }, async (request) => {
+function sanitizeGeminiJson(text) {
+    let cleanJson = text.trim();
+    cleanJson = cleanJson
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/, "")
+        .replace(/\s*```$/, "")
+        .trim();
+    const firstBracket = cleanJson.indexOf("[");
+    const lastBracket = cleanJson.lastIndexOf("]");
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+        cleanJson = cleanJson.substring(firstBracket, lastBracket + 1);
+    }
+    return cleanJson;
+}
+function sanitizeAssessmentQuestions(parsedList, skill, validatedDifficulty, now = Date.now()) {
+    if (!Array.isArray(parsedList) || parsedList.length === 0)
+        return [];
+    const candidateQuestions = [];
+    for (let i = 0; i < parsedList.length; i++) {
+        const item = parsedList[i];
+        if (!item || typeof item !== "object")
+            continue;
+        const questionText = typeof item.question === "string" ? item.question.trim() : "";
+        const options = Array.isArray(item.options)
+            ? item.options.map((opt) => String(opt).trim()).filter(Boolean)
+            : [];
+        let correctIndex = typeof item.correctAnswerIndex === "number" ? Math.floor(item.correctAnswerIndex) : 0;
+        if (!questionText || options.length < 2)
+            continue;
+        if (correctIndex < 0 || correctIndex >= options.length)
+            correctIndex = 0;
+        candidateQuestions.push({
+            id: `${skill.toLowerCase().replace(/[^a-z0-9]/g, "_")}_ai_${now}_${i}`,
+            question: questionText,
+            options: options,
+            correctAnswerIndex: correctIndex,
+            skill: skill.trim(),
+            difficulty: validatedDifficulty,
+        });
+    }
+    return candidateQuestions;
+}
+function classifyGeminiError(status, errorText, retryAfterHeader) {
+    let isDailyQuotaExhausted = false;
+    let retryDelayMs = 0;
+    const hasServiceUnavailable = status === 503 || errorText.includes("503") || errorText.includes("UNAVAILABLE");
+    if (status === 429) {
+        if (errorText.includes("GenerateRequestsPerDay") ||
+            errorText.includes("PerDay") ||
+            errorText.includes("generate_content_free_tier_requests")) {
+            isDailyQuotaExhausted = true;
+        }
+        if (retryAfterHeader) {
+            const seconds = parseInt(retryAfterHeader, 10);
+            if (!isNaN(seconds) && seconds > 0) {
+                retryDelayMs = seconds * 1000;
+            }
+        }
+    }
+    const isPermanentSkip = (status === 429 && isDailyQuotaExhausted) || (status >= 400 && status < 500 && status !== 429);
+    const isTransientError = (status === 429 && !isDailyQuotaExhausted) || status === 503;
+    return {
+        isTransientError,
+        isPermanentSkip,
+        isDailyQuotaExhausted,
+        retryDelayMs,
+        hasServiceUnavailable,
+    };
+}
+function calculateRequestTimeout(remainingBudgetMs, maxPerRequestTimeoutMs = 15000, minUsefulBudgetMs = 5000) {
+    if (remainingBudgetMs < minUsefulBudgetMs)
+        return 0;
+    return Math.min(maxPerRequestTimeoutMs, remainingBudgetMs);
+}
+function calculateSafeDelay(desiredDelayMs, remainingBudgetMs, minUsefulBudgetMs = 5000) {
+    const availableForDelay = remainingBudgetMs - minUsefulBudgetMs;
+    if (availableForDelay <= 0)
+        return 0;
+    return Math.min(desiredDelayMs, availableForDelay);
+}
+function getCandidateModels(envOverride) {
+    return [
+        envOverride,
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-flash-latest",
+    ].filter((m, i, self) => Boolean(m && m.trim().length > 0 && self.indexOf(m) === i));
+}
+exports.generateAssessmentQuestions = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region: "us-central1", timeoutSeconds: 120, memory: "512MiB" }, async (request) => {
     var _a, _b, _c, _d, _e;
     // 1. Authentication Check
     if (!request.auth) {
@@ -591,15 +685,8 @@ exports.generateAssessmentQuestions = (0, https_1.onCall)({ secrets: ["GEMINI_AP
             console.error("GEMINI_API_KEY secret is not configured on the backend.");
             throw new https_1.HttpsError("failed-precondition", "AI service is currently misconfigured.");
         }
-        // 5. Model Selection & REST Invocation with Auto-Fallback
-        const candidateModels = [
-            process.env.GEMINI_MODEL,
-            "gemini-1.5-flash",
-            "gemini-2.0-flash",
-            "gemini-2.5-flash",
-            "gemini-1.5-pro",
-            "gemini-flash-latest",
-        ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
+        // 5. Centrally Managed Active Models (Verified against Google API)
+        const candidateModels = getCandidateModels(process.env.GEMINI_MODEL);
         const prompt = `Generate ${questionCount} multiple-choice questions for a "${skill.trim()}" assessment.
 Difficulty level: ${validatedDifficulty}.
 
@@ -615,100 +702,180 @@ Ensure the questions are relevant to ${skill.trim()} and match the ${validatedDi
 "options" must have exactly 4 strings.
 "correctAnswerIndex" must be an integer from 0 to 3 indicating the correct option.
 Do not include any markdown formatting like \`\`\`json ... \`\`\`, just the raw JSON array.`;
-        // 6. Invoke Gemini REST API with fallback across active models
-        let responseText = "";
+        const startTime = Date.now();
+        const MAX_TOTAL_BUDGET_MS = 70000; // 70 seconds cumulative budget
+        const PER_REQUEST_TIMEOUT_MS = 15000; // 15 seconds per request
+        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        let sanitizedQuestions = [];
         let lastErrorText = "";
-        for (const modelName of candidateModels) {
-            try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        contents: [
-                            {
-                                parts: [
-                                    {
-                                        text: prompt,
+        let hasExplicitDailyQuotaExhaustion = false;
+        let hasServiceUnavailable = false;
+        // 6. Invoke Gemini REST API with bounded retry and active model fallback
+        modelLoop: for (const modelName of candidateModels) {
+            const remainingBudget = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
+            if (remainingBudget < 5000) {
+                console.warn(`[generateAssessmentQuestions] Remaining execution budget (${remainingBudget}ms) too low. Terminating fallback loop.`);
+                break;
+            }
+            const maxModelRetries = 2;
+            for (let attempt = 0; attempt <= maxModelRetries; attempt++) {
+                const attemptBudget = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
+                const requestTimeoutMs = calculateRequestTimeout(attemptBudget, PER_REQUEST_TIMEOUT_MS, 5000);
+                if (requestTimeoutMs === 0) {
+                    console.warn(`[generateAssessmentQuestions] Execution budget exhausted (${attemptBudget}ms remaining).`);
+                    break modelLoop;
+                }
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        signal: controller.signal,
+                        body: JSON.stringify({
+                            contents: [
+                                {
+                                    parts: [
+                                        {
+                                            text: prompt,
+                                        },
+                                    ],
+                                },
+                            ],
+                            generationConfig: {
+                                temperature: 0.5,
+                                maxOutputTokens: 4096,
+                                responseMimeType: "application/json",
+                                responseSchema: {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            question: { type: "STRING" },
+                                            options: {
+                                                type: "ARRAY",
+                                                items: { type: "STRING" },
+                                            },
+                                            correctAnswerIndex: { type: "INTEGER" },
+                                        },
+                                        required: ["question", "options", "correctAnswerIndex"],
                                     },
-                                ],
+                                },
                             },
-                        ],
-                        generationConfig: {
-                            temperature: 0.7,
-                            responseMimeType: "application/json",
-                        },
-                    }),
-                });
-                if (response.ok) {
-                    const responseData = await response.json();
-                    const text = (_e = (_d = (_c = (_b = (_a = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
-                    if (text && typeof text === "string") {
-                        responseText = text;
-                        console.log(`[generateAssessmentQuestions] Successfully generated content using model: ${modelName}`);
+                        }),
+                    });
+                    if (response.ok) {
+                        const responseData = await response.json();
+                        const candidate = (_a = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _a === void 0 ? void 0 : _a[0];
+                        const finishReason = candidate === null || candidate === void 0 ? void 0 : candidate.finishReason;
+                        const blockReason = (_b = responseData === null || responseData === void 0 ? void 0 : responseData.promptFeedback) === null || _b === void 0 ? void 0 : _b.blockReason;
+                        if (blockReason || (finishReason && finishReason !== "STOP" && finishReason !== "MAX_TOKENS")) {
+                            console.warn(`[generateAssessmentQuestions] Model ${modelName} returned HTTP 200 with blocked status: blockReason=${blockReason}, finishReason=${finishReason}`);
+                            lastErrorText = `HTTP 200 response blocked (blockReason: ${blockReason || "none"}, finishReason: ${finishReason || "none"})`;
+                            break;
+                        }
+                        const text = (_e = (_d = (_c = candidate === null || candidate === void 0 ? void 0 : candidate.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
+                        if (text && typeof text === "string" && text.trim().length > 0) {
+                            const cleanJson = sanitizeGeminiJson(text);
+                            let parsedList;
+                            try {
+                                parsedList = JSON.parse(cleanJson);
+                            }
+                            catch (jsonErr) {
+                                console.warn(`[generateAssessmentQuestions] Model ${modelName} returned invalid JSON: ${jsonErr.message}`);
+                                lastErrorText = `HTTP 200 returned invalid JSON: ${jsonErr.message}`;
+                                if (attempt < maxModelRetries) {
+                                    const remainingForDelay = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
+                                    const safeJsonDelay = calculateSafeDelay(1000 * (attempt + 1), remainingForDelay, 5000);
+                                    if (safeJsonDelay === 0) {
+                                        console.warn(`[generateAssessmentQuestions] Insufficient budget for JSON retry delay (${remainingForDelay}ms remaining).`);
+                                        break modelLoop;
+                                    }
+                                    await delay(safeJsonDelay);
+                                    continue;
+                                }
+                                break;
+                            }
+                            const candidateQuestions = sanitizeAssessmentQuestions(parsedList, skill, validatedDifficulty);
+                            if (candidateQuestions.length > 0) {
+                                sanitizedQuestions = candidateQuestions;
+                                console.log(`[generateAssessmentQuestions] Successfully generated ${sanitizedQuestions.length} questions using model: ${modelName}`);
+                                break modelLoop;
+                            }
+                            else {
+                                console.warn(`[generateAssessmentQuestions] Model ${modelName} returned 0 valid sanitized questions.`);
+                                lastErrorText = "HTTP 200 returned 0 valid questions matching schema";
+                            }
+                        }
+                        else {
+                            console.warn(`[generateAssessmentQuestions] Model ${modelName} returned empty text parts.`);
+                            lastErrorText = "HTTP 200 returned empty text parts";
+                        }
+                    }
+                    else {
+                        lastErrorText = await response.text().catch(() => "");
+                    }
+                    const status = response.status;
+                    console.warn(`[generateAssessmentQuestions] Model ${modelName} attempt ${attempt + 1} status ${status}: ${lastErrorText.slice(0, 200)}`);
+                    const errClassification = classifyGeminiError(status, lastErrorText, response.headers.get("retry-after"));
+                    if (errClassification.hasServiceUnavailable) {
+                        hasServiceUnavailable = true;
+                    }
+                    if (errClassification.isDailyQuotaExhausted) {
+                        hasExplicitDailyQuotaExhaustion = true;
+                    }
+                    // If daily quota exhausted or permanent 4xx (400, 403, 404), do not retry this model
+                    if (errClassification.isPermanentSkip) {
+                        console.warn(`[generateAssessmentQuestions] Model ${modelName} encountered non-retryable status ${status}. Skipping model.`);
                         break;
                     }
+                    // If transient rate limit (429 RPM/TPM) or 503 Overload, apply bounded backoff retry
+                    const isTransientError = errClassification.isTransientError || (response.ok && sanitizedQuestions.length === 0);
+                    if (isTransientError && attempt < maxModelRetries) {
+                        const backoffMs = errClassification.retryDelayMs > 0
+                            ? Math.min(errClassification.retryDelayMs, 3000)
+                            : Math.min(Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 500), 3000);
+                        const remainingForDelay = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
+                        const safeBackoffMs = calculateSafeDelay(backoffMs, remainingForDelay, 5000);
+                        if (safeBackoffMs === 0) {
+                            console.warn(`[generateAssessmentQuestions] Insufficient budget for retry delay (${remainingForDelay}ms remaining).`);
+                            break modelLoop;
+                        }
+                        console.log(`[generateAssessmentQuestions] Retrying model ${modelName} in ${safeBackoffMs}ms (attempt ${attempt + 1}/${maxModelRetries})...`);
+                        await delay(safeBackoffMs);
+                        continue;
+                    }
+                    break;
                 }
-                else {
-                    lastErrorText = await response.text().catch(() => "");
-                    console.warn(`Gemini API model ${modelName} returned status ${response.status}: ${lastErrorText}`);
+                catch (e) {
+                    lastErrorText = e.message || String(e);
+                    console.warn(`[generateAssessmentQuestions] Exception trying model ${modelName} attempt ${attempt + 1}: ${lastErrorText}`);
+                    if (attempt < maxModelRetries) {
+                        const remainingForDelay = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
+                        const safeCatchDelay = calculateSafeDelay(1000 * (attempt + 1), remainingForDelay, 5000);
+                        if (safeCatchDelay === 0) {
+                            console.warn(`[generateAssessmentQuestions] Insufficient budget for catch delay (${remainingForDelay}ms remaining).`);
+                            break modelLoop;
+                        }
+                        await delay(safeCatchDelay);
+                    }
+                }
+                finally {
+                    clearTimeout(timeoutId);
                 }
             }
-            catch (e) {
-                lastErrorText = e.message || String(e);
-                console.warn(`Gemini API request failed for model ${modelName}: ${lastErrorText}`);
-            }
-        }
-        if (!responseText || typeof responseText !== "string") {
-            console.error("All candidate Gemini models failed. Last error:", lastErrorText);
-            throw new https_1.HttpsError("internal", "Failed to generate assessment questions from AI service.");
-        }
-        // 7. Parse and Validate Response format
-        let cleanJson = responseText.trim();
-        if (cleanJson.startsWith("```")) {
-            cleanJson = cleanJson
-                .replace(/^```json\s*/i, "")
-                .replace(/^```\s*/, "")
-                .replace(/```$/, "")
-                .trim();
-        }
-        let parsedList;
-        try {
-            parsedList = JSON.parse(cleanJson);
-        }
-        catch (e) {
-            console.error("Failed to parse Gemini response as JSON. Raw text:", responseText, "Error:", e);
-            throw new https_1.HttpsError("internal", "AI generated a malformed response format. Please try again.");
-        }
-        if (!Array.isArray(parsedList) || parsedList.length === 0) {
-            console.error("Parsed response is not a non-empty array:", parsedList);
-            throw new https_1.HttpsError("internal", "AI failed to generate valid assessment questions.");
-        }
-        const now = Date.now();
-        const sanitizedQuestions = [];
-        for (let i = 0; i < parsedList.length; i++) {
-            const item = parsedList[i];
-            if (!item || typeof item !== "object")
-                continue;
-            const questionText = typeof item.question === "string" ? item.question.trim() : "";
-            const options = Array.isArray(item.options) ? item.options.map((opt) => String(opt).trim()).filter(Boolean) : [];
-            let correctIndex = typeof item.correctAnswerIndex === "number" ? Math.floor(item.correctAnswerIndex) : 0;
-            if (!questionText || options.length < 2)
-                continue;
-            if (correctIndex < 0 || correctIndex >= options.length)
-                correctIndex = 0;
-            sanitizedQuestions.push({
-                id: `${skill.toLowerCase().replace(/[^a-z0-9]/g, "_")}_ai_${now}_${i}`,
-                question: questionText,
-                options: options,
-                correctAnswerIndex: correctIndex,
-                skill: skill.trim(),
-                difficulty: validatedDifficulty,
-            });
         }
         if (sanitizedQuestions.length === 0) {
-            throw new https_1.HttpsError("internal", "AI generated zero valid questions.");
+            console.error("[generateAssessmentQuestions] All candidate Gemini models failed. Last error:", lastErrorText);
+            if (hasExplicitDailyQuotaExhaustion ||
+                lastErrorText.includes("RESOURCE_EXHAUSTED") ||
+                lastErrorText.includes("Quota exceeded")) {
+                throw new https_1.HttpsError("resource-exhausted", "The AI service daily usage limit has been reached. Please try again later.");
+            }
+            if (hasServiceUnavailable || lastErrorText.includes("UNAVAILABLE") || lastErrorText.includes("503")) {
+                throw new https_1.HttpsError("unavailable", "The AI service is currently experiencing high demand. Please try again in a few moments.");
+            }
+            throw new https_1.HttpsError("internal", "Failed to generate assessment questions from AI service.");
         }
         return {
             questions: sanitizedQuestions.slice(0, questionCount),

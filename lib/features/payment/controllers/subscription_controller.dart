@@ -39,6 +39,13 @@ final appleProductsProvider = FutureProvider<List<ProductDetails>>((ref) async {
       'com.talentbay.candidate.subscription.halfyearly',
     };
     final response = await InAppPurchase.instance.queryProductDetails(ids);
+    if (response.error != null) {
+      debugPrint('[SubscriptionController] appleProductsProvider StoreKit error: ${response.error!.code} - ${response.error!.message}');
+    }
+    if (response.notFoundIDs.isNotEmpty) {
+      debugPrint('[SubscriptionController] appleProductsProvider notFoundIDs: ${response.notFoundIDs}');
+    }
+    debugPrint('[SubscriptionController] appleProductsProvider resolved: ${response.productDetails.map((p) => '${p.id}: ${p.price}').toList()}');
     return response.productDetails;
   } catch (e) {
     debugPrint('Error fetching products from App Store: $e');
@@ -215,21 +222,50 @@ class SubscriptionController extends Notifier<bool> {
       _contextRef = WeakReference(context);
       state = true;
       try {
-        final String productId = plan['appleProductId'];
-        
+        final String productId = (plan['appleProductId'] as String?)?.trim() ?? '';
+        if (productId.isEmpty) {
+          throw Exception('Product ID is missing for this subscription plan.');
+        }
+
         final bool available = await InAppPurchase.instance.isAvailable();
         if (!available) {
           throw Exception('App Store In-App Purchases are not available on this device.');
         }
 
-        final ProductDetailsResponse response =
-            await InAppPurchase.instance.queryProductDetails({productId});
+        ProductDetails? productDetails;
 
-        if (response.productDetails.isEmpty) {
-          throw Exception('Product details not found on the App Store.');
+        // 1. Check if product details were already resolved by appleProductsProvider
+        final preloaded = ref.read(appleProductsProvider).value;
+        if (preloaded != null && preloaded.isNotEmpty) {
+          final matches = preloaded.where((p) => p.id == productId);
+          if (matches.isNotEmpty) {
+            productDetails = matches.first;
+            debugPrint('[SubscriptionController] Using preloaded ProductDetails for $productId');
+          }
         }
 
-        final ProductDetails productDetails = response.productDetails.first;
+        // 2. If not found in preloaded list, query App Store directly
+        if (productDetails == null) {
+          debugPrint('[SubscriptionController] Querying App Store directly for product: $productId');
+          final ProductDetailsResponse response =
+              await InAppPurchase.instance.queryProductDetails({productId});
+
+          if (response.error != null) {
+            debugPrint('[SubscriptionController] StoreKit query error: ${response.error!.code} - ${response.error!.message}');
+            throw Exception('App Store error (${response.error!.code}): ${response.error!.message}');
+          }
+
+          if (response.productDetails.isEmpty) {
+            debugPrint('[SubscriptionController] StoreKit query returned empty. notFoundIDs: ${response.notFoundIDs}');
+            if (response.notFoundIDs.contains(productId)) {
+              throw Exception('Product details not found on the App Store (ID: $productId).');
+            }
+            throw Exception('Product details not found on the App Store.');
+          }
+
+          productDetails = response.productDetails.first;
+        }
+
         final PurchaseParam purchaseParam = PurchaseParam(productDetails: productDetails);
         
         _selectedPlanDurationDays = plan['durationDays'];

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import '../models/assessment_model.dart';
 
@@ -14,14 +15,21 @@ class AssessmentService {
     String difficulty = 'Medium',
   }) async {
     try {
-      final callable = _functions.httpsCallable('generateAssessmentQuestions');
-      final response = await callable.call<Map<String, dynamic>>({
+      final callable = _functions.httpsCallable(
+        'generateAssessmentQuestions',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 90)),
+      );
+      final response = await callable.call({
         'skill': skill,
         'difficulty': difficulty,
         'count': count,
       });
 
-      final data = response.data;
+      final rawData = response.data;
+      if (rawData == null || rawData is! Map) {
+        throw Exception('AI failed to generate valid assessment questions.');
+      }
+      final data = Map<String, dynamic>.from(rawData);
       final rawQuestions = data['questions'] as List<dynamic>? ?? [];
 
       final questions = <AssessmentQuestion>[];
@@ -50,10 +58,10 @@ class AssessmentService {
 
       return questions.take(count).toList();
     } on FirebaseFunctionsException catch (e) {
-      print('AI Assessment Generation Cloud Function error: ${e.message}');
-      throw Exception(e.message ?? 'Failed to load assessment');
+      debugPrint('AI Assessment Generation Cloud Function error [${e.code}]: ${e.message}');
+      rethrow;
     } catch (e) {
-      print('AI Assessment Generation failed: $e');
+      debugPrint('AI Assessment Generation failed: $e');
       rethrow;
     }
   }
@@ -66,11 +74,15 @@ class AssessmentService {
 
     try {
       final callable = _functions.httpsCallable('getRelatedSkills');
-      final response = await callable.call<Map<String, dynamic>>({
+      final response = await callable.call({
         'currentSkills': currentSkills,
       });
 
-      final data = response.data;
+      final rawData = response.data;
+      if (rawData == null || rawData is! Map) {
+        return [];
+      }
+      final data = Map<String, dynamic>.from(rawData);
       final rawRelated = data['relatedSkills'] as List<dynamic>? ?? [];
 
       final related = rawRelated
@@ -80,7 +92,7 @@ class AssessmentService {
 
       return related.take(5).toList();
     } catch (e) {
-      print('Related/Recommended skills generation failed: $e');
+      debugPrint('Related/Recommended skills generation failed: $e');
       return []; // Return empty list on failure gracefully
     }
   }
@@ -119,7 +131,7 @@ class AssessmentService {
 
       return Map<String, dynamic>.from(data);
     } catch (e) {
-      print('Career Readiness Guidance generation failed: $e');
+      debugPrint('Career Readiness Guidance generation failed: $e');
       rethrow;
     }
   }
