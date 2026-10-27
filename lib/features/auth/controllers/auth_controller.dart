@@ -153,6 +153,7 @@ class AuthController extends AsyncNotifier<void> {
     Function(String verificationId)? onCodeSent,
     Function(PhoneAuthCredential credential)? verificationCompleted,
   }) async {
+    if (state.isLoading) return;
     state = const AsyncValue.loading();
     try {
       await _authRepository.verifyPhoneNumber(
@@ -291,6 +292,7 @@ class AuthController extends AsyncNotifier<void> {
     required String phoneNumber,
     Function(String verificationId)? onCodeSent,
   }) async {
+    if (state.isLoading) return;
     // Determine the current state value to restore it if needed, or loading
     state = const AsyncValue.loading();
     // We don't want to reset the entire auth state (logout user) if this fails,
@@ -353,6 +355,7 @@ class AuthController extends AsyncNotifier<void> {
     required Function(String verificationId) onCodeSent,
     required Function(PhoneAuthCredential) onAutoVerified,
   }) async {
+    if (state.isLoading) return;
     state = const AsyncValue.loading();
     try {
       await _authRepository.verifyPhoneNumber(
