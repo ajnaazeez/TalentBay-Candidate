@@ -1,17 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getCareerReadinessGuidance = exports.loginWithPhoneOtp = exports.syncVerifiedPhone = exports.reconcileMyPayments = exports.confirmRazorpayPayment = exports.verifyEmailOtp = exports.sendEmailOtp = exports.verifyRazorpayPayment = exports.createRazorpayOrder = exports.deleteUserAccount = exports.getRelatedSkills = exports.generateAssessmentQuestions = exports.enhanceText = exports.bulkPostJobs = exports.generateJobDescription = exports.onMessageCreated = void 0;
+exports.startCandidateFreeTrial = exports.onCandidateCreated = exports.getCareerReadinessGuidance = exports.loginWithPhoneOtp = exports.syncVerifiedPhone = exports.reconcileMyPayments = exports.confirmRazorpayPayment = exports.verifyEmailOtp = exports.sendEmailOtp = exports.verifyRazorpayPayment = exports.createRazorpayOrder = exports.deleteUserAccount = exports.getRelatedSkills = exports.generateAssessmentQuestions = exports.enhanceText = exports.bulkPostJobs = exports.generateJobDescription = exports.onMessageCreated = void 0;
+exports.sanitizeEnhancedText = sanitizeEnhancedText;
 exports.sanitizeGeminiJson = sanitizeGeminiJson;
 exports.sanitizeAssessmentQuestions = sanitizeAssessmentQuestions;
 exports.classifyGeminiError = classifyGeminiError;
 exports.calculateRequestTimeout = calculateRequestTimeout;
 exports.calculateSafeDelay = calculateSafeDelay;
 exports.getCandidateModels = getCandidateModels;
+exports.generateStructuredFallbackGuidance = generateStructuredFallbackGuidance;
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
+const entitlement_1 = require("./entitlement");
 admin.initializeApp();
 const db = admin.firestore();
 async function sendOtpEmail(toEmail, otpCode) {
@@ -442,7 +445,22 @@ exports.bulkPostJobs = (0, https_1.onCall)(async (request) => {
         throw new https_1.HttpsError("internal", `An error occurred while bulk posting: ${error.message}`);
     }
 });
-exports.enhanceText = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region: "us-central1" }, async (request) => {
+function sanitizeEnhancedText(text) {
+    if (!text || typeof text !== "string")
+        return "";
+    let clean = text.trim();
+    if (clean.startsWith("```")) {
+        clean = clean
+            .replace(/^```[a-zA-Z]*\s*/, "")
+            .replace(/```$/, "")
+            .trim();
+    }
+    if (clean.startsWith('"') && clean.endsWith('"') && clean.length >= 2) {
+        clean = clean.slice(1, -1).trim();
+    }
+    return clean;
+}
+exports.enhanceText = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region: "us-central1", timeoutSeconds: 60 }, async (request) => {
     var _a, _b, _c, _d, _e, _f;
     // 1. Authentication Check
     if (!request.auth) {
@@ -456,6 +474,11 @@ exports.enhanceText = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region:
         const isCandidate = candidateDoc.exists || (userDoc.exists && ((_a = userDoc.data()) === null || _a === void 0 ? void 0 : _a.role) === "candidate");
         if (!isCandidate) {
             throw new https_1.HttpsError("permission-denied", "Candidate profile not found or unauthorized.");
+        }
+        // 2b. Entitlement Verification (Subscription or Active 7-Day Trial)
+        const entitlement = await (0, entitlement_1.verifyCandidateEntitlement)(userId, db);
+        if (!entitlement.hasAccess) {
+            throw new https_1.HttpsError("permission-denied", "An active subscription or free trial is required to enhance profile descriptions.");
         }
         // 3. Payload and Input Validation
         const data = request.data;
@@ -491,23 +514,19 @@ exports.enhanceText = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region:
             console.error("GEMINI_API_KEY secret is not configured on the backend.");
             throw new https_1.HttpsError("failed-precondition", "AI service is currently misconfigured.");
         }
-        // 5. Model Selection & REST Invocation with Auto-Fallback
-        const candidateModels = [
-            process.env.GEMINI_MODEL,
-            "gemini-1.5-flash",
-            "gemini-2.0-flash",
-            "gemini-2.5-flash",
-            "gemini-1.5-pro",
-            "gemini-flash-latest",
-        ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
+        // 5. Centrally Managed Active Models (Verified against Google API)
+        const candidateModels = getCandidateModels(process.env.GEMINI_MODEL);
         let lastErrorText = "";
         for (const modelName of candidateModels) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000);
             try {
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
                     },
+                    signal: controller.signal,
                     body: JSON.stringify({
                         contents: [
                             {
@@ -523,24 +542,26 @@ exports.enhanceText = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region:
                         },
                     }),
                 });
+                clearTimeout(timeoutId);
                 if (response.ok) {
                     const responseData = await response.json();
-                    const responseText = (_f = (_e = (_d = (_c = (_b = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _b === void 0 ? void 0 : _b[0]) === null || _c === void 0 ? void 0 : _c.content) === null || _d === void 0 ? void 0 : _d.parts) === null || _e === void 0 ? void 0 : _e[0]) === null || _f === void 0 ? void 0 : _f.text;
+                    const candidate = (_b = responseData === null || responseData === void 0 ? void 0 : responseData.candidates) === null || _b === void 0 ? void 0 : _b[0];
+                    const finishReason = candidate === null || candidate === void 0 ? void 0 : candidate.finishReason;
+                    const blockReason = (_c = responseData === null || responseData === void 0 ? void 0 : responseData.promptFeedback) === null || _c === void 0 ? void 0 : _c.blockReason;
+                    if (blockReason || (finishReason && finishReason !== "STOP" && finishReason !== "MAX_TOKENS")) {
+                        console.warn(`[enhanceText] Model ${modelName} returned HTTP 200 with blocked status: blockReason=${blockReason}, finishReason=${finishReason}`);
+                        lastErrorText = `HTTP 200 response blocked (blockReason: ${blockReason || "none"}, finishReason: ${finishReason || "none"})`;
+                        continue;
+                    }
+                    const responseText = (_f = (_e = (_d = candidate === null || candidate === void 0 ? void 0 : candidate.content) === null || _d === void 0 ? void 0 : _d.parts) === null || _e === void 0 ? void 0 : _e[0]) === null || _f === void 0 ? void 0 : _f.text;
                     if (responseText && typeof responseText === "string") {
-                        let enhancedText = responseText.trim();
-                        if (enhancedText.startsWith("```")) {
-                            enhancedText = enhancedText
-                                .replace(/^```[a-zA-Z]*\s*/, "")
-                                .replace(/```$/, "")
-                                .trim();
+                        const enhancedText = sanitizeEnhancedText(responseText);
+                        if (enhancedText.length > 0) {
+                            console.log(`[enhanceText] Successfully generated text using model: ${modelName}`);
+                            return {
+                                enhancedText,
+                            };
                         }
-                        if (enhancedText.startsWith('"') && enhancedText.endsWith('"') && enhancedText.length > 2) {
-                            enhancedText = enhancedText.slice(1, -1).trim();
-                        }
-                        console.log(`[enhanceText] Successfully generated text using model: ${modelName}`);
-                        return {
-                            enhancedText,
-                        };
                     }
                 }
                 else {
@@ -549,11 +570,12 @@ exports.enhanceText = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region:
                 }
             }
             catch (err) {
+                clearTimeout(timeoutId);
                 console.warn(`[enhanceText] Exception trying model ${modelName}:`, err);
             }
         }
         console.error("[enhanceText] All candidate Gemini models failed. Last error:", lastErrorText);
-        throw new https_1.HttpsError("internal", "Failed to generate enhanced text from AI service.");
+        throw new https_1.HttpsError("unavailable", "Failed to generate enhanced text from AI service. Please try again shortly.");
     }
     catch (error) {
         if (error instanceof https_1.HttpsError) {
@@ -646,9 +668,9 @@ function calculateSafeDelay(desiredDelayMs, remainingBudgetMs, minUsefulBudgetMs
 function getCandidateModels(envOverride) {
     return [
         envOverride,
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
         "gemini-flash-latest",
+        "gemini-3.6-flash",
     ].filter((m, i, self) => Boolean(m && m.trim().length > 0 && self.indexOf(m) === i));
 }
 exports.generateAssessmentQuestions = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region: "us-central1", timeoutSeconds: 120, memory: "512MiB" }, async (request) => {
@@ -663,6 +685,11 @@ exports.generateAssessmentQuestions = (0, https_1.onCall)({ secrets: ["GEMINI_AP
         const candidateDoc = await db.collection("candidates").doc(userId).get();
         if (!candidateDoc.exists) {
             throw new https_1.HttpsError("permission-denied", "Candidate profile not found or unauthorized.");
+        }
+        // 2b. Entitlement Verification (Subscription or Active 7-Day Trial)
+        const entitlement = await (0, entitlement_1.verifyCandidateEntitlement)(userId, db);
+        if (!entitlement.hasAccess) {
+            throw new https_1.HttpsError("permission-denied", "An active subscription or free trial is required to generate skill assessments.");
         }
         // 3. Payload and Input Validation
         const data = request.data;
@@ -703,8 +730,8 @@ Ensure the questions are relevant to ${skill.trim()} and match the ${validatedDi
 "correctAnswerIndex" must be an integer from 0 to 3 indicating the correct option.
 Do not include any markdown formatting like \`\`\`json ... \`\`\`, just the raw JSON array.`;
         const startTime = Date.now();
-        const MAX_TOTAL_BUDGET_MS = 70000; // 70 seconds cumulative budget
-        const PER_REQUEST_TIMEOUT_MS = 15000; // 15 seconds per request
+        const MAX_TOTAL_BUDGET_MS = 60000; // 60 seconds cumulative budget
+        const PER_REQUEST_TIMEOUT_MS = 20000; // 20 seconds per request for reliable generation
         const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         let sanitizedQuestions = [];
         let lastErrorText = "";
@@ -717,7 +744,7 @@ Do not include any markdown formatting like \`\`\`json ... \`\`\`, just the raw 
                 console.warn(`[generateAssessmentQuestions] Remaining execution budget (${remainingBudget}ms) too low. Terminating fallback loop.`);
                 break;
             }
-            const maxModelRetries = 2;
+            const maxModelRetries = 1;
             for (let attempt = 0; attempt <= maxModelRetries; attempt++) {
                 const attemptBudget = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
                 const requestTimeoutMs = calculateRequestTimeout(attemptBudget, PER_REQUEST_TIMEOUT_MS, 5000);
@@ -820,6 +847,8 @@ Do not include any markdown formatting like \`\`\`json ... \`\`\`, just the raw 
                     const errClassification = classifyGeminiError(status, lastErrorText, response.headers.get("retry-after"));
                     if (errClassification.hasServiceUnavailable) {
                         hasServiceUnavailable = true;
+                        console.warn(`[generateAssessmentQuestions] Model ${modelName} returned 503 High Demand. Fast failover to next model.`);
+                        break;
                     }
                     if (errClassification.isDailyQuotaExhausted) {
                         hasExplicitDailyQuotaExhaustion = true;
@@ -829,12 +858,12 @@ Do not include any markdown formatting like \`\`\`json ... \`\`\`, just the raw 
                         console.warn(`[generateAssessmentQuestions] Model ${modelName} encountered non-retryable status ${status}. Skipping model.`);
                         break;
                     }
-                    // If transient rate limit (429 RPM/TPM) or 503 Overload, apply bounded backoff retry
+                    // If transient rate limit (429 RPM/TPM), apply bounded backoff retry
                     const isTransientError = errClassification.isTransientError || (response.ok && sanitizedQuestions.length === 0);
                     if (isTransientError && attempt < maxModelRetries) {
                         const backoffMs = errClassification.retryDelayMs > 0
-                            ? Math.min(errClassification.retryDelayMs, 3000)
-                            : Math.min(Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 500), 3000);
+                            ? Math.min(errClassification.retryDelayMs, 2000)
+                            : Math.min(Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 500), 2000);
                         const remainingForDelay = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
                         const safeBackoffMs = calculateSafeDelay(backoffMs, remainingForDelay, 5000);
                         if (safeBackoffMs === 0) {
@@ -850,6 +879,10 @@ Do not include any markdown formatting like \`\`\`json ... \`\`\`, just the raw 
                 catch (e) {
                     lastErrorText = e.message || String(e);
                     console.warn(`[generateAssessmentQuestions] Exception trying model ${modelName} attempt ${attempt + 1}: ${lastErrorText}`);
+                    if (e.name === "AbortError" || lastErrorText.includes("aborted")) {
+                        console.warn(`[generateAssessmentQuestions] Model ${modelName} timed out after ${requestTimeoutMs}ms. Fast failover to next model.`);
+                        break;
+                    }
                     if (attempt < maxModelRetries) {
                         const remainingForDelay = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
                         const safeCatchDelay = calculateSafeDelay(1000 * (attempt + 1), remainingForDelay, 5000);
@@ -924,15 +957,8 @@ exports.getRelatedSkills = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], re
             console.error("GEMINI_API_KEY secret is not configured on the backend.");
             throw new https_1.HttpsError("failed-precondition", "AI service is currently misconfigured.");
         }
-        // 5. Model Selection & REST Invocation with Auto-Fallback
-        const candidateModels = [
-            process.env.GEMINI_MODEL,
-            "gemini-1.5-flash",
-            "gemini-2.0-flash",
-            "gemini-2.5-flash",
-            "gemini-1.5-pro",
-            "gemini-flash-latest",
-        ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
+        // 5. Centrally Managed Active Models (Verified against Google API)
+        const candidateModels = getCandidateModels(process.env.GEMINI_MODEL);
         const prompt = `Given the following list of technical skills: ${cleanedSkills.join(", ")}.
 Suggest 5 related technical skills that this candidate would benefit from learning or might already know.
 
@@ -1268,7 +1294,6 @@ const SUBSCRIPTION_PLANS = [
  * Creates a server-side order with Razorpay.
  */
 exports.createRazorpayOrder = (0, https_1.onCall)({ region: "us-central1" }, async (request) => {
-    var _a;
     // 1. Strict Authentication Check
     if (!request.auth || !request.auth.uid) {
         throw new https_1.HttpsError("unauthenticated", "You must be signed in to create an order.");
@@ -1294,10 +1319,7 @@ exports.createRazorpayOrder = (0, https_1.onCall)({ region: "us-central1" }, asy
         }
     }
     else if (plan.id === "7_days_trial") {
-        const candidateDoc = await db.collection("candidates").doc(uid).get();
-        if (candidateDoc.exists && ((_a = candidateDoc.data()) === null || _a === void 0 ? void 0 : _a.hasUsedTrial) === true) {
-            throw new https_1.HttpsError("failed-precondition", "The introductory trial offer is only available once per candidate.");
-        }
+        throw new https_1.HttpsError("failed-precondition", "The ₹1 trial offer has been retired. New eligible candidate accounts receive a 7-day free trial automatically.");
     }
     // 3. Razorpay Secrets Validation
     const keyId = process.env.RAZORPAY_KEY_ID || "rzp_live_TdPCKnpedQNEW6";
@@ -2276,8 +2298,80 @@ exports.loginWithPhoneOtp = (0, https_1.onCall)({ region: "us-central1" }, async
         throw new https_1.HttpsError("internal", error.message || "Failed to process phone OTP login.");
     }
 });
+function generateStructuredFallbackGuidance(skillScores, targetJobTitle, targetJobSkills = []) {
+    const skills = Object.keys(skillScores);
+    const skillsToStrengthen = skills.map((skill) => {
+        const score = Math.round(Number(skillScores[skill]) || 0);
+        const guidance = score >= 75
+            ? "Strong foundation. Focus on advanced patterns, optimization, and system design."
+            : score >= 60
+                ? "Solid foundation. Practice practical scenarios and hands-on projects to boost your confidence."
+                : "Great start. Strengthen core fundamentals and review key practical concepts.";
+        return {
+            skill,
+            score,
+            guidance,
+            roadmapSteps: [
+                {
+                    stepNumber: 1,
+                    title: "Build the basics",
+                    description: "Master core principles and fundamental concepts",
+                    actionHeader: "LEARN",
+                    actionItems: [
+                        `Review core syntax and essential fundamentals of ${skill}`,
+                        `Understand key terminology, best practices, and data structures`,
+                        `Explore documentation and standard design patterns in ${skill}`,
+                    ],
+                },
+                {
+                    stepNumber: 2,
+                    title: "Practice hands-on",
+                    description: "Build practical projects and realistic mini-applications",
+                    actionHeader: "DO",
+                    actionItems: [
+                        `Build 2-3 focused mini-projects implementing ${skill} features`,
+                        `Solve real-world challenges and debug common edge cases`,
+                        `Refactor existing code to adhere to clean code standards`,
+                    ],
+                },
+                {
+                    stepNumber: 3,
+                    title: "Go deeper",
+                    description: "Tackle performance, optimization, and edge cases",
+                    actionHeader: "FOCUS ON",
+                    actionItems: [
+                        `Learn performance optimization techniques in ${skill}`,
+                        `Study architectural patterns, modularity, and security standards`,
+                        `Implement automated unit testing and error handling`,
+                    ],
+                },
+                {
+                    stepNumber: 4,
+                    title: "Check your progress",
+                    description: "Validate your improvement with practical assessments",
+                    actionHeader: "CHECK YOUR PROGRESS",
+                    actionItems: [
+                        `Retake the ${skill} assessment to verify score improvement`,
+                        `Showcase your projects in your candidate profile portfolio`,
+                    ],
+                },
+            ],
+        };
+    });
+    const summary = skills.length > 0
+        ? `You have demonstrated a solid technical foundation across ${skills.join(", ")}. Targeted hands-on practice will help you reach full career readiness.`
+        : "Complete skill assessments to receive tailored learning paths for your career journey.";
+    const advice = targetJobTitle && targetJobTitle.trim().length > 0
+        ? `To excel as a ${targetJobTitle.trim()}, focus on mastering the key required technologies and building end-to-end projects that highlight both your technical proficiency and problem-solving ability.`
+        : "Maintain consistent daily practice across your assessed skills and validate your progress by retaking assessments as you build projects.";
+    return {
+        overallSummary: summary,
+        skillsToStrengthen,
+        jobMatchAdvice: advice,
+    };
+}
 exports.getCareerReadinessGuidance = (0, https_1.onCall)({ secrets: ["GEMINI_API_KEY"], region: "us-central1" }, async (request) => {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e;
     if (!request.auth) {
         throw new https_1.HttpsError("unauthenticated", "The function must be called while authenticated.");
     }
@@ -2290,20 +2384,56 @@ exports.getCareerReadinessGuidance = (0, https_1.onCall)({ secrets: ["GEMINI_API
         if (!candidateDoc.exists) {
             throw new https_1.HttpsError("permission-denied", "Candidate profile not found or unauthorized.");
         }
+        // 2b. Entitlement Verification (Subscription or Active 7-Day Trial)
+        const entitlement = await (0, entitlement_1.verifyCandidateEntitlement)(userId, db);
+        if (!entitlement.hasAccess) {
+            throw new https_1.HttpsError("permission-denied", "An active subscription or free trial is required for career readiness guidance.");
+        }
         const data = request.data || {};
         const skillScores = data.skillScores || {};
         const targetJobTitle = (data.targetJobTitle || "").trim();
         const targetJobSkills = Array.isArray(data.targetJobSkills) ? data.targetJobSkills : [];
+        const forceRefresh = Boolean(data.forceRefresh);
+        // Safe Cache Check: if skill scores and target job are identical, return cached guidance immediately
+        const sortedScores = Object.keys(skillScores)
+            .sort()
+            .reduce((acc, k) => {
+            acc[k] = Math.round(Number(skillScores[k]) || 0);
+            return acc;
+        }, {});
+        const cacheSignature = crypto
+            .createHash("sha256")
+            .update(JSON.stringify({
+            scores: sortedScores,
+            title: targetJobTitle,
+            skills: [...targetJobSkills].sort(),
+        }))
+            .digest("hex");
+        if (!forceRefresh) {
+            try {
+                const cacheDoc = await db
+                    .collection("candidates")
+                    .doc(userId)
+                    .collection("guidance_cache")
+                    .doc("latest")
+                    .get();
+                if (cacheDoc.exists) {
+                    const cacheData = cacheDoc.data();
+                    if (cacheData && cacheData.signature === cacheSignature && cacheData.guidance) {
+                        console.log(`[getCareerReadinessGuidance] Returning cached guidance for user ${userId} (signature: ${cacheSignature.slice(0, 8)})`);
+                        return cacheData.guidance;
+                    }
+                }
+            }
+            catch (cacheErr) {
+                console.warn("[getCareerReadinessGuidance] Cache lookup error (continuing without cache):", cacheErr);
+            }
+        }
         const apiKey = (process.env.GEMINI_API_KEY || "").trim();
         if (!apiKey) {
             throw new https_1.HttpsError("failed-precondition", "AI service is currently misconfigured.");
         }
-        const candidateModels = [
-            process.env.GEMINI_MODEL,
-            "gemini-3.8-flash",
-            "gemini-1.5-flash",
-            "gemini-2.0-flash",
-        ].filter((m, i, self) => m && m.trim().length > 0 && self.indexOf(m) === i);
+        const candidateModels = getCandidateModels(process.env.GEMINI_MODEL);
         const skillsFormatted = Object.entries(skillScores)
             .map(([skill, score]) => `- ${skill}: ${score}%`)
             .join("\n");
@@ -2377,14 +2507,31 @@ Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
         let lastErrorText = "";
         let hasExplicitDailyQuotaExhaustion = false;
         let hasServiceUnavailable = false;
+        const startTime = Date.now();
+        const MAX_TOTAL_BUDGET_MS = 55000;
+        const PER_REQUEST_TIMEOUT_MS = 25000;
         const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-        for (const modelName of candidateModels) {
-            const maxModelRetries = 2;
+        modelLoop: for (const modelName of candidateModels) {
+            const remainingBudget = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
+            if (remainingBudget < 5000) {
+                console.warn(`[getCareerReadinessGuidance] Remaining execution budget (${remainingBudget}ms) too low. Terminating fallback loop.`);
+                break;
+            }
+            const maxModelRetries = 1;
             for (let attempt = 0; attempt <= maxModelRetries; attempt++) {
+                const attemptBudget = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
+                const requestTimeoutMs = calculateRequestTimeout(attemptBudget, PER_REQUEST_TIMEOUT_MS, 5000);
+                if (requestTimeoutMs === 0) {
+                    console.warn(`[getCareerReadinessGuidance] Execution budget exhausted (${attemptBudget}ms remaining).`);
+                    break modelLoop;
+                }
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
                 try {
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
+                        signal: controller.signal,
                         body: JSON.stringify({
                             contents: [{ parts: [{ text: prompt }] }],
                             generationConfig: {
@@ -2403,6 +2550,7 @@ Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
                             console.warn(`[getCareerReadinessGuidance] Model ${modelName} returned HTTP 200 with blocked/non-STOP status: blockReason=${blockReason}, finishReason=${finishReason}`);
                             lastErrorText = `HTTP 200 response blocked (blockReason: ${blockReason || "none"}, finishReason: ${finishReason || "none"})`;
                             isBlockedResponse = true;
+                            break;
                         }
                         else {
                             const text = (_e = (_d = (_c = candidate === null || candidate === void 0 ? void 0 : candidate.content) === null || _c === void 0 ? void 0 : _c.parts) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.text;
@@ -2426,7 +2574,7 @@ Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
                                         Array.isArray(parsed.skillsToStrengthen)) {
                                         responseText = cleanJson;
                                         console.log(`[getCareerReadinessGuidance] Successfully generated & validated content using model: ${modelName}`);
-                                        break;
+                                        break modelLoop;
                                     }
                                     else {
                                         console.warn(`[getCareerReadinessGuidance] Model ${modelName} returned JSON missing required schema fields.`);
@@ -2449,78 +2597,52 @@ Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
                     }
                     const status = response.status;
                     console.warn(`[getCareerReadinessGuidance] Model ${modelName} attempt ${attempt + 1} status ${status}: ${lastErrorText.slice(0, 200)}`);
-                    if (status === 503 || lastErrorText.includes("503") || lastErrorText.includes("UNAVAILABLE")) {
+                    const errClassification = classifyGeminiError(status, lastErrorText, response.headers.get("retry-after"));
+                    if (errClassification.hasServiceUnavailable) {
                         hasServiceUnavailable = true;
-                    }
-                    // Check specifically for explicit Daily Quota Exhaustion based on quota ID / metric
-                    let isExplicitDailyQuotaExhausted = false;
-                    let retryDelayMs = 0;
-                    if (status === 429) {
-                        try {
-                            const errObj = JSON.parse(lastErrorText);
-                            const errDetails = ((_f = errObj === null || errObj === void 0 ? void 0 : errObj.error) === null || _f === void 0 ? void 0 : _f.details) || [];
-                            const quotaFailure = errDetails.find((d) => { var _a; return (_a = d["@type"]) === null || _a === void 0 ? void 0 : _a.includes("QuotaFailure"); });
-                            const violations = (quotaFailure === null || quotaFailure === void 0 ? void 0 : quotaFailure.violations) || [];
-                            const dailyViolation = violations.find((v) => {
-                                var _a, _b, _c;
-                                return ((_a = v === null || v === void 0 ? void 0 : v.quotaId) === null || _a === void 0 ? void 0 : _a.includes("GenerateRequestsPerDay")) ||
-                                    ((_b = v === null || v === void 0 ? void 0 : v.quotaId) === null || _b === void 0 ? void 0 : _b.includes("PerDay")) ||
-                                    ((_c = v === null || v === void 0 ? void 0 : v.quotaMetric) === null || _c === void 0 ? void 0 : _c.includes("generate_content_free_tier_requests"));
-                            });
-                            if (dailyViolation ||
-                                lastErrorText.includes("GenerateRequestsPerDayPerProjectPerModel-FreeTier") ||
-                                lastErrorText.includes("GenerateRequestsPerDay")) {
-                                isExplicitDailyQuotaExhausted = true;
-                                hasExplicitDailyQuotaExhaustion = true;
-                            }
-                            const retryInfo = errDetails.find((d) => { var _a; return (_a = d["@type"]) === null || _a === void 0 ? void 0 : _a.includes("RetryInfo"); });
-                            if (retryInfo === null || retryInfo === void 0 ? void 0 : retryInfo.retryDelay) {
-                                const seconds = parseInt(retryInfo.retryDelay.replace("s", ""), 10);
-                                if (!isNaN(seconds) && seconds > 0) {
-                                    retryDelayMs = seconds * 1000;
-                                }
-                            }
-                        }
-                        catch (_) {
-                            if (lastErrorText.includes("GenerateRequestsPerDay")) {
-                                isExplicitDailyQuotaExhausted = true;
-                                hasExplicitDailyQuotaExhaustion = true;
-                            }
-                        }
-                        const retryAfterHeader = response.headers.get("retry-after");
-                        if (retryAfterHeader) {
-                            const seconds = parseInt(retryAfterHeader, 10);
-                            if (!isNaN(seconds) && seconds > 0) {
-                                retryDelayMs = seconds * 1000;
-                            }
-                        }
-                    }
-                    // If explicit daily quota is exhausted for this model, do not retry this model. Fall through to try next candidate model.
-                    if (status === 429 && isExplicitDailyQuotaExhausted) {
-                        console.warn(`[getCareerReadinessGuidance] Model ${modelName} Explicit Daily Quota Exhausted (GenerateRequestsPerDay). Skipping retries for this model.`);
+                        console.warn(`[getCareerReadinessGuidance] Model ${modelName} returned 503 High Demand. Fast failover to next model.`);
                         break;
                     }
-                    // If response was blocked by content filters, retrying same prompt on same model will not help; fall through to next model
-                    if (response.ok && isBlockedResponse) {
-                        console.warn(`[getCareerReadinessGuidance] Model ${modelName} response was blocked. Skipping retries for this model.`);
+                    if (errClassification.isDailyQuotaExhausted) {
+                        hasExplicitDailyQuotaExhaustion = true;
+                    }
+                    if (errClassification.isPermanentSkip || isBlockedResponse) {
+                        console.warn(`[getCareerReadinessGuidance] Model ${modelName} encountered non-retryable status ${status}. Skipping model.`);
                         break;
                     }
-                    // If transient rate limit (429 RPM/TPM), server overload (503), or invalid text 200, apply bounded backoff retry on same model
-                    const isTransientError = status === 429 || status === 503 || (response.ok && !responseText);
+                    // Transient retry on same model (only for rate limit 429 RPM/TPM)
+                    const isTransientError = errClassification.isTransientError || (response.ok && !responseText);
                     if (isTransientError && attempt < maxModelRetries) {
-                        const backoffMs = retryDelayMs > 0 ? Math.min(retryDelayMs, 5000) : Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 500);
-                        console.log(`[getCareerReadinessGuidance] Retrying model ${modelName} in ${backoffMs}ms (attempt ${attempt + 1}/${maxModelRetries})...`);
-                        await delay(backoffMs);
+                        const backoffMs = errClassification.retryDelayMs > 0
+                            ? Math.min(errClassification.retryDelayMs, 2000)
+                            : Math.min(Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 500), 2000);
+                        const remainingForDelay = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
+                        const safeBackoffMs = calculateSafeDelay(backoffMs, remainingForDelay, 5000);
+                        if (safeBackoffMs === 0)
+                            break modelLoop;
+                        console.log(`[getCareerReadinessGuidance] Retrying model ${modelName} in ${safeBackoffMs}ms (attempt ${attempt + 1}/${maxModelRetries})...`);
+                        await delay(safeBackoffMs);
                         continue;
                     }
                     break;
                 }
                 catch (e) {
                     lastErrorText = e.message || String(e);
-                    console.warn(`[getCareerReadinessGuidance] Exception trying model ${modelName} attempt ${attempt + 1}:`, lastErrorText);
-                    if (attempt < maxModelRetries) {
-                        await delay(1000 * (attempt + 1));
+                    console.warn(`[getCareerReadinessGuidance] Exception trying model ${modelName} attempt ${attempt + 1}: ${lastErrorText}`);
+                    if (e.name === "AbortError" || lastErrorText.includes("aborted")) {
+                        console.warn(`[getCareerReadinessGuidance] Model ${modelName} timed out after ${requestTimeoutMs}ms. Fast failover to next model.`);
+                        break;
                     }
+                    if (attempt < maxModelRetries) {
+                        const remainingForDelay = MAX_TOTAL_BUDGET_MS - (Date.now() - startTime);
+                        const safeCatchDelay = calculateSafeDelay(1000 * (attempt + 1), remainingForDelay, 5000);
+                        if (safeCatchDelay === 0)
+                            break modelLoop;
+                        await delay(safeCatchDelay);
+                    }
+                }
+                finally {
+                    clearTimeout(timeoutId);
                 }
             }
             if (responseText) {
@@ -2528,16 +2650,21 @@ Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
             }
         }
         if (!responseText) {
-            console.error("[getCareerReadinessGuidance] All candidate Gemini models failed. Last error:", lastErrorText);
-            if (hasExplicitDailyQuotaExhaustion ||
-                lastErrorText.includes("RESOURCE_EXHAUSTED") ||
-                lastErrorText.includes("Quota exceeded")) {
-                throw new https_1.HttpsError("resource-exhausted", "The AI service daily usage limit has been reached. Please try again later or contact support.");
-            }
-            if (hasServiceUnavailable || lastErrorText.includes("UNAVAILABLE") || lastErrorText.includes("503")) {
-                throw new https_1.HttpsError("unavailable", "The AI service is currently experiencing high demand. Please try again in a few moments.");
-            }
-            throw new https_1.HttpsError("internal", "AI failed to generate guidance.");
+            console.warn(`[getCareerReadinessGuidance] Gemini unavailable (dailyQuotaExhausted: ${hasExplicitDailyQuotaExhaustion}, serviceUnavailable: ${hasServiceUnavailable}, lastError: ${lastErrorText.slice(0, 100)}). Generating structured preparation fallback plan.`);
+            const fallbackData = generateStructuredFallbackGuidance(skillScores, targetJobTitle, targetJobSkills);
+            db.collection("candidates")
+                .doc(userId)
+                .collection("guidance_cache")
+                .doc("latest")
+                .set({
+                signature: cacheSignature,
+                guidance: fallbackData,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            })
+                .catch((cacheErr) => {
+                console.warn("[getCareerReadinessGuidance] Failed to write cache:", cacheErr);
+            });
+            return fallbackData;
         }
         let cleanJson = responseText.trim();
         cleanJson = cleanJson
@@ -2558,6 +2685,19 @@ Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
             console.error("[getCareerReadinessGuidance] JSON parse error. Raw text:", responseText, "Error:", e);
             throw new https_1.HttpsError("internal", "AI generated a malformed response format. Please try again.");
         }
+        // Asynchronously cache valid guidance result for this candidate and signature
+        db.collection("candidates")
+            .doc(userId)
+            .collection("guidance_cache")
+            .doc("latest")
+            .set({
+            signature: cacheSignature,
+            guidance: parsedData,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        })
+            .catch((cacheErr) => {
+            console.warn("[getCareerReadinessGuidance] Failed to write cache:", cacheErr);
+        });
         return parsedData;
     }
     catch (error) {
@@ -2567,5 +2707,34 @@ Do NOT wrap output in markdown codeblocks. Return pure valid JSON.`;
         console.error("[getCareerReadinessGuidance] Error:", error);
         throw new https_1.HttpsError("internal", "An error occurred while generating guidance.");
     }
+});
+/**
+ * onCandidateCreated (us-central1)
+ * Automatically initializes an atomic 7-day free trial when a candidate profile is created.
+ * Idempotent: duplicate triggers or retries will NEVER extend or restart the trial.
+ */
+exports.onCandidateCreated = (0, firestore_1.onDocumentCreated)({ document: "candidates/{candidateId}", region: "us-central1" }, async (event) => {
+    const candidateId = event.params.candidateId;
+    if (!candidateId)
+        return;
+    try {
+        const result = await (0, entitlement_1.grantInitialTrial)(candidateId, db);
+        console.log(`[onCandidateCreated] Trial evaluation for candidate ${candidateId}:`, result);
+    }
+    catch (err) {
+        console.error(`[onCandidateCreated] Error granting trial for candidate ${candidateId}:`, err);
+    }
+});
+/**
+ * startCandidateFreeTrial (us-central1)
+ * Idempotent callable endpoint for candidates to ensure immediate trial initialization.
+ * Concurrency-safe: duplicate calls are strict no-ops.
+ */
+exports.startCandidateFreeTrial = (0, https_1.onCall)({ region: "us-central1" }, async (request) => {
+    if (!request.auth || !request.auth.uid) {
+        throw new https_1.HttpsError("unauthenticated", "You must be signed in to initialize a trial.");
+    }
+    const result = await (0, entitlement_1.grantInitialTrial)(request.auth.uid, db);
+    return result;
 });
 //# sourceMappingURL=index.js.map

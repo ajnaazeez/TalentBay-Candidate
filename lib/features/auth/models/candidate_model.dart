@@ -62,12 +62,21 @@ class CandidateModel {
   final String accountStatus; // Active, Blocked
   final DateTime lastUpdated;
 
-  // Subscription Fields
+  // Subscription & Trial Fields
   final bool isPremium;
   final DateTime? subscriptionExpiryDate;
-  final String? subscriptionStatus; // 'active', 'expired', 'none'
+  final String? subscriptionStatus; // 'active', 'expired', 'none', 'trial'
   final bool hasUsedTrial;
+  final DateTime? trialStartDate;
+  final DateTime? trialExpiryDate;
   final String? appleSubscriptionId;
+
+  /// Returns true if the user currently holds an active, unexpired 7-day free trial.
+  bool get isTrialActive {
+    if (!isPremium || subscriptionStatus != 'trial') return false;
+    if (trialExpiryDate == null) return false;
+    return trialExpiryDate!.isAfter(DateTime.now());
+  }
 
   CandidateModel({
     required this.uid,
@@ -108,6 +117,8 @@ class CandidateModel {
     this.subscriptionExpiryDate,
     this.subscriptionStatus = 'none',
     this.hasUsedTrial = false,
+    this.trialStartDate,
+    this.trialExpiryDate,
     this.appleSubscriptionId,
   });
 
@@ -152,6 +163,8 @@ class CandidateModel {
       'subscriptionExpiryDate': subscriptionExpiryDate?.toIso8601String(),
       'subscriptionStatus': subscriptionStatus,
       'hasUsedTrial': hasUsedTrial,
+      if (trialStartDate != null) 'trialStartDate': trialStartDate!.toIso8601String(),
+      if (trialExpiryDate != null) 'trialExpiryDate': trialExpiryDate!.toIso8601String(),
       'appleSubscriptionId': appleSubscriptionId,
     };
   }
@@ -274,6 +287,8 @@ class CandidateModel {
       subscriptionExpiryDate: parseNullableDate(map['subscriptionExpiryDate']),
       subscriptionStatus: map['subscriptionStatus']?.toString() ?? 'none',
       hasUsedTrial: map['hasUsedTrial'] is bool ? map['hasUsedTrial'] as bool : false,
+      trialStartDate: parseNullableDate(map['trialStartDate']),
+      trialExpiryDate: parseNullableDate(map['trialExpiryDate']),
       appleSubscriptionId: map['appleSubscriptionId']?.toString(),
     );
   }
@@ -317,6 +332,8 @@ class CandidateModel {
     DateTime? subscriptionExpiryDate,
     String? subscriptionStatus,
     bool? hasUsedTrial,
+    DateTime? trialStartDate,
+    DateTime? trialExpiryDate,
     String? appleSubscriptionId,
   }) {
     return CandidateModel(
@@ -360,6 +377,8 @@ class CandidateModel {
           subscriptionExpiryDate ?? this.subscriptionExpiryDate,
       subscriptionStatus: subscriptionStatus ?? this.subscriptionStatus,
       hasUsedTrial: hasUsedTrial ?? this.hasUsedTrial,
+      trialStartDate: trialStartDate ?? this.trialStartDate,
+      trialExpiryDate: trialExpiryDate ?? this.trialExpiryDate,
       appleSubscriptionId: appleSubscriptionId ?? this.appleSubscriptionId,
     );
   }

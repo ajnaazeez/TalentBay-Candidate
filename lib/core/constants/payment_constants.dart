@@ -33,8 +33,8 @@ class PaymentConstants {
     {
       'id': '3_months',
       'title': '3 Months',
-      'amount': '56900', // 569.00
-      'displayAmount': '569',
+      'amount': '59900', // 599.00
+      'displayAmount': '599',
       'durationDays': 90,
       'description': 'Quarterly Premium Subscription (90 Days)',
       'linkId': 'plink_TJQSujCLADJB1O', // with 5% offer
@@ -44,8 +44,8 @@ class PaymentConstants {
     {
       'id': '6_months',
       'title': '6 Months',
-      'amount': '107900', // 1079.00
-      'displayAmount': '1079',
+      'amount': '99900', // 999.00
+      'displayAmount': '999',
       'durationDays': 180,
       'description': 'Half-Yearly Premium Subscription (180 Days)',
       'linkId': 'plink_TJQTRnkjPsKld5', // with 10% offer

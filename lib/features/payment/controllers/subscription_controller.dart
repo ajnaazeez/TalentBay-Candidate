@@ -268,7 +268,9 @@ class SubscriptionController extends Notifier<bool> {
 
         final PurchaseParam purchaseParam = PurchaseParam(productDetails: productDetails);
         
-        _selectedPlanDurationDays = plan['durationDays'];
+        // On iOS, the 7_days_trial plan represents the 1-month introductory offer (30 days)
+        _selectedPlanDurationDays = (plan['id'] == '7_days_trial') ? 30 : plan['durationDays'];
+        _currentPlanId = plan['id']?.toString();
 
         await InAppPurchase.instance.buyNonConsumable(purchaseParam: purchaseParam);
       } catch (e) {
@@ -338,7 +340,8 @@ class SubscriptionController extends Notifier<bool> {
         'lastUpdated': DateTime.now().toIso8601String(),
       };
 
-      if (days == 7) {
+      final isIntroOrTrial = _currentPlanId == '7_days_trial' || days == 7;
+      if (isIntroOrTrial) {
         updateData['hasUsedTrial'] = true;
       }
 
@@ -351,8 +354,8 @@ class SubscriptionController extends Notifier<bool> {
       if (context != null && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(days == 7
-                ? 'Trial Activated! Welcome to Premium.'
+            content: Text(isIntroOrTrial
+                ? 'Welcome to Premium! Your introductory subscription is active.'
                 : 'Subscription Successful! Premium Renewed.'),
             backgroundColor: Colors.green,
           ),

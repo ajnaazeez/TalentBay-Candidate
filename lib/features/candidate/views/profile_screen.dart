@@ -624,30 +624,47 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         ),
 
         const SizedBox(height: 12),
-        if (candidate.isPremium)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.amber,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.star, size: 14, color: Colors.black),
-                SizedBox(width: 4),
-                Text(
-                  'PREMIUM MEMBER',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
+        if (candidate.isPremium) ...[
+          GestureDetector(
+            onTap: () => SubscriptionPromptDialog.show(context),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.amber,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.star, size: 14, color: Colors.black),
+                  SizedBox(width: 4),
+                  Text(
+                    'PREMIUM MEMBER',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          )
-        else
+          ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            onPressed: () => SubscriptionPromptDialog.show(context),
+            icon: const Icon(Icons.card_membership, size: 14),
+            label: const Text(
+              'View Subscription Plans',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.primaryBrand,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            ),
+          ),
+        ] else
           TextButton.icon(
             onPressed: () {
               SubscriptionPromptDialog.show(context);

@@ -7,6 +7,7 @@ import '../models/assessment_model.dart';
 import '../repositories/assessment_repository.dart';
 import '../services/assessment_service.dart';
 import 'assessment_screen.dart';
+import '../../candidate/controllers/candidate_controller.dart';
 import '../../jobs/models/job_model.dart';
 import '../../../core/theme/app_colors.dart';
 
@@ -39,6 +40,9 @@ class CareerReadinessScreen extends ConsumerStatefulWidget {
 
 class _CareerReadinessScreenState
     extends ConsumerState<CareerReadinessScreen> {
+  /// Client-side memory cache to provide 0ms instant display when returning to this screen
+  static final Map<String, Map<String, dynamic>> _guidanceMemoryCache = {};
+
   bool _isLoadingAi = false;
   String? _aiError;
   Map<String, dynamic>? _aiGuidance;
@@ -72,9 +76,11 @@ class _CareerReadinessScreenState
       final doc =
           await FirebaseFirestore.instance.collection('jobs').doc(jobId).get();
       if (doc.exists && doc.data() != null) {
-        setState(() {
-          _targetJob = JobModel.fromMap(doc.data()!);
-        });
+        if (mounted) {
+          setState(() {
+            _targetJob = JobModel.fromMap(doc.data()!);
+          });
+        }
       }
     } catch (e) {
       debugPrint('Error loading job details for readiness: $e');
@@ -83,8 +89,32 @@ class _CareerReadinessScreenState
     }
   }
 
-  Future<void> _fetchAiGuidance(Map<String, double> skillScores) async {
+  Future<void> _fetchAiGuidance(
+    Map<String, double> skillScores, {
+    bool forceRefresh = false,
+  }) async {
     if (_isLoadingAi) return;
+
+    // Check client-side memory cache first for instant 0ms load
+    final user = ref.read(candidateControllerProvider).value;
+    final uid = user?.uid ?? 'anon';
+    final scoresSignature = (skillScores.keys.toList()..sort())
+        .map((k) => '$k:${skillScores[k]?.round()}')
+        .join(',');
+    final targetJobId = widget.jobId ?? _targetJob?.roleName ?? 'general';
+    final cacheKey = '$uid|$targetJobId|$scoresSignature';
+
+    if (!forceRefresh && _guidanceMemoryCache.containsKey(cacheKey)) {
+      final cached = _guidanceMemoryCache[cacheKey]!;
+      setState(() {
+        _aiGuidance = cached;
+        _isLoadingAi = false;
+        _aiError = null;
+        _expandSkillsFromGuidance(cached, skillScores);
+      });
+      return;
+    }
+
     setState(() {
       _isLoadingAi = true;
       _aiError = null;
@@ -101,40 +131,131 @@ class _CareerReadinessScreenState
         skillScores: skillScores,
         targetJobTitle: _targetJob?.roleName,
         targetJobSkills: targetSkills,
+        forceRefresh: forceRefresh,
       );
+
+      // Save to memory cache
+      _guidanceMemoryCache[cacheKey] = guidance;
 
       if (mounted) {
         setState(() {
           _aiGuidance = guidance;
           _isLoadingAi = false;
-
-          // Expand all skills in guidance and skill scores by default so roadmap cards render
-          final skillsList = guidance['skillsToStrengthen'] as List?;
-          if (skillsList != null && skillsList.isNotEmpty) {
-            for (var item in skillsList) {
-              if (item is Map) {
-                final sName = item['skill']?.toString();
-                if (sName != null && sName.isNotEmpty) {
-                  _expandedSkills.add(sName.toLowerCase().trim());
-                }
-              }
-            }
-          }
-          for (var sName in skillScores.keys) {
-            if (sName.isNotEmpty) {
-              _expandedSkills.add(sName.toLowerCase().trim());
-            }
-          }
+          _expandSkillsFromGuidance(guidance, skillScores);
         });
       }
     } catch (e) {
       debugPrint('Career Readiness AI error: $e');
       if (mounted) {
+        final fallback = _generateLocalGuidance(skillScores);
+        _guidanceMemoryCache[cacheKey] = fallback;
         setState(() {
-          _aiError =
-              'AI suggestions are temporarily unavailable. Your skill scores are still displayed below.';
+          _aiGuidance = fallback;
           _isLoadingAi = false;
+          _aiError = null;
+          _expandSkillsFromGuidance(fallback, skillScores);
         });
+      }
+    }
+  }
+
+  Map<String, dynamic> _generateLocalGuidance(Map<String, double> skillScores) {
+    final skillsToStrengthen = <Map<String, dynamic>>[];
+    for (final entry in skillScores.entries) {
+      final skill = entry.key;
+      final score = entry.value.round();
+      final guidance = score >= 75
+          ? 'Strong foundation. Focus on advanced patterns, optimization, and system design.'
+          : score >= 60
+              ? 'Solid foundation. Practice practical scenarios and hands-on projects to boost your confidence.'
+              : 'Great start. Strengthen core fundamentals and review key practical concepts.';
+
+      skillsToStrengthen.add({
+        'skill': skill,
+        'score': score,
+        'guidance': guidance,
+        'roadmapSteps': [
+          {
+            'stepNumber': 1,
+            'title': 'Build the basics',
+            'description': 'Master core principles and fundamental concepts',
+            'actionHeader': 'LEARN',
+            'actionItems': [
+              'Review core syntax and essential fundamentals of $skill',
+              'Understand key terminology, best practices, and data structures',
+              'Explore documentation and standard design patterns in $skill',
+            ],
+          },
+          {
+            'stepNumber': 2,
+            'title': 'Practice hands-on',
+            'description': 'Build practical projects and realistic mini-applications',
+            'actionHeader': 'DO',
+            'actionItems': [
+              'Build 2-3 focused mini-projects implementing $skill features',
+              'Solve real-world challenges and debug common edge cases',
+              'Refactor existing code to adhere to clean code standards',
+            ],
+          },
+          {
+            'stepNumber': 3,
+            'title': 'Go deeper',
+            'description': 'Tackle performance, optimization, and edge cases',
+            'actionHeader': 'FOCUS ON',
+            'actionItems': [
+              'Learn performance optimization techniques in $skill',
+              'Study architectural patterns, modularity, and security standards',
+              'Implement automated unit testing and error handling',
+            ],
+          },
+          {
+            'stepNumber': 4,
+            'title': 'Check your progress',
+            'description': 'Validate your improvement with practical assessments',
+            'actionHeader': 'CHECK YOUR PROGRESS',
+            'actionItems': [
+              'Retake the $skill assessment to verify score improvement',
+              'Showcase your projects in your candidate profile portfolio',
+            ],
+          },
+        ],
+      });
+    }
+
+    final targetJob = _targetJob?.roleName;
+    final summary = skillScores.isNotEmpty
+        ? 'You have demonstrated a solid technical foundation across ${skillScores.keys.join(', ')}. Targeted hands-on practice will help you reach full career readiness.'
+        : 'Complete skill assessments to receive tailored learning paths for your career journey.';
+
+    final advice = targetJob != null && targetJob.isNotEmpty
+        ? 'To excel as a $targetJob, focus on mastering the key required technologies and building end-to-end projects that highlight both your technical proficiency and problem-solving ability.'
+        : 'Maintain consistent daily practice across your assessed skills and validate your progress by retaking assessments as you build projects.';
+
+    return {
+      'overallSummary': summary,
+      'skillsToStrengthen': skillsToStrengthen,
+      'jobMatchAdvice': advice,
+    };
+  }
+
+  void _expandSkillsFromGuidance(
+    Map<String, dynamic> guidance,
+    Map<String, double> skillScores,
+  ) {
+    final skillsList = guidance['skillsToStrengthen'] as List?;
+    if (skillsList != null && skillsList.isNotEmpty) {
+      for (var item in skillsList) {
+        if (item is Map) {
+          final sName = item['skill']?.toString();
+          if (sName != null && sName.isNotEmpty) {
+            _expandedSkills.add(sName.toLowerCase().trim());
+          }
+        }
+      }
+    }
+    for (var sName in skillScores.keys) {
+      if (sName.isNotEmpty) {
+        _expandedSkills.add(sName.toLowerCase().trim());
       }
     }
   }
@@ -525,8 +646,8 @@ class _CareerReadinessScreenState
             return !skillScores.keys.any((k) => k.trim().toLowerCase() == normalizedKey);
           }).toList();
 
-          // Auto-trigger AI guidance fetch if guidance is null and not loading
-          if (_aiGuidance == null && !_isLoadingAi && _aiError == null && skillScores.isNotEmpty) {
+          // Auto-trigger AI guidance fetch if guidance is null, not loading, and job details (if any) are finished loading
+          if (_aiGuidance == null && !_isLoadingAi && _aiError == null && skillScores.isNotEmpty && !_isLoadingJob) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _fetchAiGuidance(skillScores);
             });
@@ -1043,8 +1164,6 @@ class _CareerReadinessScreenState
     required Color subTextColor,
     required bool isDark,
   }) {
-    final isExpanded = _expandedSkills.contains(skillName.toLowerCase().trim());
-
     String statusLabel;
     Color statusBg;
     Color statusFg;
@@ -1085,8 +1204,7 @@ class _CareerReadinessScreenState
         color: cardColor,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isExpanded ? AppColors.primaryBrand : borderColor,
-          width: isExpanded ? 1.5 : 1.0,
+          color: borderColor,
         ),
       ),
       child: Column(
@@ -1156,42 +1274,6 @@ class _CareerReadinessScreenState
                   reasonText,
                   style: TextStyle(fontSize: 11, color: subTextColor),
                 ),
-                const SizedBox(height: 10),
-                InkWell(
-                  onTap: () {
-                    setState(() {
-                      if (isExpanded) {
-                        _expandedSkills.remove(skillName.toLowerCase().trim());
-                      } else {
-                        _expandedSkills.add(skillName.toLowerCase().trim());
-                      }
-                    });
-                  },
-                  borderRadius: BorderRadius.circular(6),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          isExpanded ? 'Hide plan' : 'View 4-step plan',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.primaryBrand,
-                          ),
-                        ),
-                        Icon(
-                          isExpanded
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          size: 18,
-                          color: AppColors.primaryBrand,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
               ],
             ),
           ),
@@ -1227,7 +1309,7 @@ class _CareerReadinessScreenState
             if (_aiGuidance != null)
               IconButton(
                 icon: const Icon(Icons.refresh, size: 18),
-                onPressed: () => _fetchAiGuidance(skillScores),
+                onPressed: () => _fetchAiGuidance(skillScores, forceRefresh: true),
                 tooltip: 'Refresh AI Roadmap',
               ),
           ],
@@ -1252,9 +1334,19 @@ class _CareerReadinessScreenState
             child: Column(
               children: [
                 CircularProgressIndicator(color: AppColors.primaryBrand),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 Text(
-                  'Building your custom preparation roadmap with AI...',
+                  'Creating your career roadmap...',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Analyzing your skill scores and building step-by-step action plans',
+                  textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 12, color: subTextColor),
                 ),
               ],
@@ -1280,7 +1372,7 @@ class _CareerReadinessScreenState
                 ),
                 const SizedBox(height: 10),
                 OutlinedButton.icon(
-                  onPressed: () => _fetchAiGuidance(skillScores),
+                  onPressed: () => _fetchAiGuidance(skillScores, forceRefresh: true),
                   icon: const Icon(Icons.refresh, size: 16),
                   label: const Text('Try Again'),
                 ),

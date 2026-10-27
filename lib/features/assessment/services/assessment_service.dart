@@ -17,7 +17,7 @@ class AssessmentService {
     try {
       final callable = _functions.httpsCallable(
         'generateAssessmentQuestions',
-        options: HttpsCallableOptions(timeout: const Duration(seconds: 90)),
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 45)),
       );
       final response = await callable.call({
         'skill': skill,
@@ -113,15 +113,20 @@ class AssessmentService {
     required Map<String, double> skillScores,
     String? targetJobTitle,
     List<String>? targetJobSkills,
+    bool forceRefresh = false,
   }) async {
     try {
-      final callable = _functions.httpsCallable('getCareerReadinessGuidance');
+      final callable = _functions.httpsCallable(
+        'getCareerReadinessGuidance',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 45)),
+      );
       final response = await callable.call({
         'skillScores': skillScores,
         if (targetJobTitle != null && targetJobTitle.isNotEmpty)
           'targetJobTitle': targetJobTitle,
         if (targetJobSkills != null && targetJobSkills.isNotEmpty)
           'targetJobSkills': targetJobSkills,
+        if (forceRefresh) 'forceRefresh': true,
       });
 
       final data = response.data;

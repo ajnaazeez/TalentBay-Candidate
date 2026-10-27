@@ -106,7 +106,7 @@ class _HomeTabState extends ConsumerState<HomeTab>
         ? computedFullName
         : (authUser?.email?.split('@').first ?? 'Candidate');
         
-    if (candidate != null && !candidate.hasUsedTrial && !_hasShownTrialPrompt) {
+    if (candidate != null && (candidate.isTrialActive || !candidate.hasUsedTrial) && !_hasShownTrialPrompt) {
       _hasShownTrialPrompt = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {

@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const {
   sanitizeGeminiJson,
   sanitizeAssessmentQuestions,
+  sanitizeEnhancedText,
   classifyGeminiError,
   calculateRequestTimeout,
   calculateSafeDelay,
@@ -207,16 +208,16 @@ describe("Backend Assessment Reliability & Resilience Unit Tests (Production Cod
   });
 
   describe("Configured fallback model cascade and environment override", () => {
-    test("Default fallback order has gemini-3.8-flash primary and gemini-3.6-flash secondary", () => {
+    test("Default fallback order has gemini-3.5-flash-lite primary and gemini-flash-latest secondary", () => {
       const models = getCandidateModels();
       assert.deepEqual(models, [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
         "gemini-flash-latest",
+        "gemini-3.6-flash",
       ]);
-      assert.equal(models[0], "gemini-3.8-flash", "Primary model must be gemini-3.8-flash");
-      assert.equal(models[1], "gemini-3.6-flash", "Secondary model must be gemini-3.6-flash");
-      assert.equal(models[2], "gemini-flash-latest", "Tertiary model must be gemini-flash-latest");
+      assert.equal(models[0], "gemini-3.5-flash-lite", "Primary model must be gemini-3.5-flash-lite");
+      assert.equal(models[1], "gemini-flash-latest", "Secondary model must be gemini-flash-latest");
+      assert.equal(models[2], "gemini-3.6-flash", "Tertiary model must be gemini-3.6-flash");
       assert.equal(models.includes("gemini-3.5-flash"), false, "Deprecated gemini-3.5-flash must not be in the list");
     });
 
@@ -224,39 +225,69 @@ describe("Backend Assessment Reliability & Resilience Unit Tests (Production Cod
       const models = getCandidateModels("custom-preview-model");
       assert.deepEqual(models, [
         "custom-preview-model",
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
         "gemini-flash-latest",
+        "gemini-3.6-flash",
       ]);
       assert.equal(models[0], "custom-preview-model");
     });
 
     test("Deduplicates if GEMINI_MODEL matches one of the default models", () => {
-      const models = getCandidateModels("gemini-3.8-flash");
+      const models = getCandidateModels("gemini-3.5-flash-lite");
       assert.deepEqual(models, [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
         "gemini-flash-latest",
+        "gemini-3.6-flash",
       ]);
       assert.equal(models.length, 3);
     });
 
     test("Ignores empty or whitespace-only GEMINI_MODEL override", () => {
       assert.deepEqual(getCandidateModels(""), [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
         "gemini-flash-latest",
+        "gemini-3.6-flash",
       ]);
       assert.deepEqual(getCandidateModels("   "), [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
         "gemini-flash-latest",
+        "gemini-3.6-flash",
       ]);
       assert.deepEqual(getCandidateModels(null), [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
         "gemini-flash-latest",
+        "gemini-3.6-flash",
       ]);
     });
   });
+
+  describe("Enhanced text sanitization via production sanitizeEnhancedText", () => {
+    test("Leaves clean text untouched", () => {
+      const input = "Passionate junior MERN stack developer with hands-on experience in React and Node.js.";
+      assert.equal(sanitizeEnhancedText(input), input);
+    });
+
+    test("Strips wrapping markdown code blocks", () => {
+      const input = "```markdown\nDynamic and motivated MERN stack developer building robust web applications.\n```";
+      assert.equal(
+        sanitizeEnhancedText(input),
+        "Dynamic and motivated MERN stack developer building robust web applications."
+      );
+    });
+
+    test("Strips outer quotation marks", () => {
+      const input = '"Full-stack developer experienced in modern JavaScript frameworks."';
+      assert.equal(
+        sanitizeEnhancedText(input),
+        "Full-stack developer experienced in modern JavaScript frameworks."
+      );
+    });
+
+    test("Handles empty or nullish input gracefully", () => {
+      assert.equal(sanitizeEnhancedText(""), "");
+      assert.equal(sanitizeEnhancedText(null), "");
+      assert.equal(sanitizeEnhancedText(undefined), "");
+    });
+  });
 });
+

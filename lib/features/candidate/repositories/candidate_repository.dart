@@ -63,11 +63,15 @@ class CandidateRepository {
   }
 
   Future<void> markSubscriptionExpired(String uid) async {
-    await _firestore.collection('candidates').doc(uid).update({
-      'isPremium': false,
-      'subscriptionStatus': 'expired',
-      'lastUpdated': DateTime.now().toIso8601String(),
-    });
+    try {
+      await _firestore.collection('candidates').doc(uid).update({
+        'isPremium': false,
+        'subscriptionStatus': 'expired',
+        'lastUpdated': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {
+      // Expiration is authoritatively handled server-side by verifyCandidateEntitlement
+    }
   }
 
   Future<void> updateCandidate(CandidateModel candidate) async {
@@ -82,11 +86,14 @@ class CandidateRepository {
       );
 
       final data = updatedCandidate.toMap();
-      // Subscription fields are written only by the payment backend.
+      // Subscription and trial fields are written only by the server-side backend.
       data.remove('isPremium');
       data.remove('subscriptionExpiryDate');
       data.remove('subscriptionStatus');
       data.remove('hasUsedTrial');
+      data.remove('trialStartDate');
+      data.remove('trialExpiryDate');
+      data.remove('subscriptionPlanId');
       data.remove('appleSubscriptionId');
 
       await _firestore

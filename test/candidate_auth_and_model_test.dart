@@ -199,6 +199,74 @@ void main() {
     });
   });
 
+  group('CandidateModel 7-Day Free Trial Tests', () {
+    test('Parses trialStartDate and trialExpiryDate from Firestore map correctly', () {
+      final now = DateTime.now();
+      final expiry = now.add(const Duration(days: 7));
+      final map = {
+        'uid': 'trial_test_uid',
+        'email': 'trial@example.com',
+        'isPremium': true,
+        'subscriptionStatus': 'trial',
+        'hasUsedTrial': true,
+        'trialStartDate': now.toIso8601String(),
+        'trialExpiryDate': expiry.toIso8601String(),
+        'createdAt': now.toIso8601String(),
+        'lastUpdated': now.toIso8601String(),
+      };
+
+      final candidate = CandidateModel.fromMap(map);
+      expect(candidate.hasUsedTrial, isTrue);
+      expect(candidate.isPremium, isTrue);
+      expect(candidate.subscriptionStatus, equals('trial'));
+      expect(candidate.trialStartDate, isNotNull);
+      expect(candidate.trialExpiryDate, isNotNull);
+      expect(candidate.isTrialActive, isTrue);
+    });
+
+    test('isTrialActive returns false when trial has expired', () {
+      final pastStart = DateTime.now().subtract(const Duration(days: 8));
+      final pastExpiry = DateTime.now().subtract(const Duration(days: 1));
+      final map = {
+        'uid': 'expired_trial_uid',
+        'email': 'expired@example.com',
+        'isPremium': false,
+        'subscriptionStatus': 'expired',
+        'hasUsedTrial': true,
+        'trialStartDate': pastStart.toIso8601String(),
+        'trialExpiryDate': pastExpiry.toIso8601String(),
+        'createdAt': pastStart.toIso8601String(),
+        'lastUpdated': pastStart.toIso8601String(),
+      };
+
+      final candidate = CandidateModel.fromMap(map);
+      expect(candidate.isTrialActive, isFalse);
+    });
+
+    test('toMap serializes trialStartDate and trialExpiryDate safely', () {
+      final now = DateTime.now();
+      final expiry = now.add(const Duration(days: 7));
+      final candidate = CandidateModel(
+        uid: 'serialize_test_uid',
+        email: 'serialize@example.com',
+        isPremium: true,
+        subscriptionStatus: 'trial',
+        hasUsedTrial: true,
+        trialStartDate: now,
+        trialExpiryDate: expiry,
+        createdAt: now,
+        lastUpdated: now,
+      );
+
+      final map = candidate.toMap();
+      expect(map['hasUsedTrial'], isTrue);
+      expect(map['trialStartDate'], equals(now.toIso8601String()));
+      expect(map['trialExpiryDate'], equals(expiry.toIso8601String()));
+      expect(map['isPremium'], isTrue);
+      expect(map['subscriptionStatus'], equals('trial'));
+    });
+  });
+
   group('JobApplication In-Memory Sorting Tests', () {
     test('Sorts job applications descending by appliedAt with nulls last', () {
       final app1 = JobApplicationModel(

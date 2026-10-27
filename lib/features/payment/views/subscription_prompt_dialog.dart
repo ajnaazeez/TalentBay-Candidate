@@ -1,10 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:talentbay_candidate/core/constants/payment_constants.dart';
 import 'package:talentbay_candidate/core/utils/platform_utils.dart';
 import 'package:talentbay_candidate/features/candidate/controllers/candidate_controller.dart';
 import 'package:talentbay_candidate/features/payment/controllers/subscription_controller.dart';
+import 'package:talentbay_candidate/features/payment/utils/apple_subscription_offer_helper.dart';
 import '../../../core/theme/app_colors.dart';
 
 class SubscriptionPromptDialog extends ConsumerWidget {
@@ -27,20 +29,40 @@ class SubscriptionPromptDialog extends ConsumerWidget {
     final user = ref.watch(candidateControllerProvider).value;
     final hasUsedTrial = user?.hasUsedTrial ?? false;
 
-    // Show all plans together
-    final plansToShow = [
-      PaymentConstants.trialPlan,
-      ...PaymentConstants.subscriptionPlans,
-    ];
+    // Show supported paid plans (1 month, 3 months, 6 months)
+    final plansToShow = PaymentConstants.subscriptionPlans;
 
     // Watch Apple product details on iOS
     final appleProductsAsync = ref.watch(appleProductsProvider);
 
+    // Resolve monthly ProductDetails to retrieve store introductory and renewal prices
+    ProductDetails? monthlyAppleProduct;
+    appleProductsAsync.whenData((products) {
+      final matches = products.where(
+        (p) => p.id == 'com.talentbay.candidate.subscription.monthly',
+      );
+      if (matches.isNotEmpty) {
+        monthlyAppleProduct = matches.first;
+      }
+    });
+
+    final appleOfferInfo = AppleIntroductoryOfferInfo.fromProductDetails(monthlyAppleProduct);
+
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    const titleText = 'PREMIUM MEMBER';
-    const subtitleText = 'Full access to all features. Cancel anytime.';
+    final isTrialActive = user?.isTrialActive ?? false;
+    final isTrialExpired = hasUsedTrial && (user?.isPremium != true);
+    final titleText = isTrialActive
+        ? 'FREE 7-DAY TRIAL ACTIVE'
+        : (isTrialExpired
+            ? 'YOUR 7-DAY FREE TRIAL HAS EXPIRED'
+            : 'PREMIUM MEMBER');
+    final subtitleText = isTrialActive
+        ? 'You have an active free 7-day trial. Paid subscription options below are available when your trial ends.'
+        : (isTrialExpired
+            ? 'Subscribe to keep full access to skill assessments, AI guidance, and recruiter messaging.'
+            : 'Full access to all features. Cancel anytime.');
 
     String getDisplayPrice(Map<String, dynamic> plan) {
       if (Platform.isAndroid) {
@@ -49,7 +71,7 @@ class SubscriptionPromptDialog extends ConsumerWidget {
       
       // On iOS
       if (plan['id'] == '7_days_trial') {
-        return 'Free';
+        return appleOfferInfo.introPriceText;
       }
       
       final appleProductId = plan['appleProductId'];
@@ -67,9 +89,23 @@ class SubscriptionPromptDialog extends ConsumerWidget {
 
     String getPlanTitle(Map<String, dynamic> plan) {
       if (Platform.isIOS && plan['id'] == '7_days_trial') {
-        return '7 Days Free Trial';
+        return appleOfferInfo.cardTitleText;
       }
       return plan['title'];
+    }
+
+    String? getPlanSubtitle(Map<String, dynamic> plan) {
+      if (Platform.isIOS && plan['id'] == '7_days_trial') {
+        return appleOfferInfo.renewalDisclosureText;
+      }
+      return null;
+    }
+
+    String? getPlanOfferTag(Map<String, dynamic> plan) {
+      if (Platform.isIOS && plan['id'] == '7_days_trial') {
+        return appleOfferInfo.offerBadgeText;
+      }
+      return plan['offer'] as String?;
     }
 
     return Dialog(
@@ -144,6 +180,46 @@ class SubscriptionPromptDialog extends ConsumerWidget {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 24),
+                  if (isTrialActive) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? Colors.amber.withOpacity(0.12)
+                            : const Color(0xFFFFFBEB),
+                        border: Border.all(
+                          color: Colors.amber.shade700,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.verified,
+                            color: Colors.amber.shade700,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              user?.trialExpiryDate != null
+                                  ? 'Your free trial is active until ${user!.trialExpiryDate!.day}/${user.trialExpiryDate!.month}/${user.trialExpiryDate!.year}. Viewing these plans will not charge you or end your free trial.'
+                                  : 'Your 7-day free trial is currently active. Viewing these plans will not charge you or end your free trial.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: isDark
+                                    ? Colors.amber.shade200
+                                    : Colors.amber.shade900,
+                                height: 1.3,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   if (paymentNotice != null && paymentNotice.isNotEmpty) ...[
                     Container(
                       padding: const EdgeInsets.all(12),
@@ -174,6 +250,8 @@ class SubscriptionPromptDialog extends ConsumerWidget {
                         Navigator.pop(context);
                         controller.startSubscription(context, plan);
                       },
+                      subtitleText: getPlanSubtitle(plan),
+                      customOfferTag: getPlanOfferTag(plan),
                     );
                   }),
 
@@ -280,11 +358,13 @@ class SubscriptionPromptDialog extends ConsumerWidget {
     bool isUsed,
     String priceText,
     String titleText,
-    VoidCallback onTap,
-  ) {
+    VoidCallback onTap, {
+    String? subtitleText,
+    String? customOfferTag,
+  }) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final offer = plan['offer'] as String?;
+    final offer = customOfferTag ?? (plan['offer'] as String?);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -311,17 +391,20 @@ class SubscriptionPromptDialog extends ConsumerWidget {
                     children: [
                       Row(
                         children: [
-                          Text(
-                            titleText,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.0,
-                              color: theme.colorScheme.onSurface,
+                          Flexible(
+                            child: Text(
+                              titleText,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.0,
+                                color: theme.colorScheme.onSurface,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           if (offer != null && !isUsed) ...[
-                            const SizedBox(width: 12),
+                            const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
@@ -350,6 +433,17 @@ class SubscriptionPromptDialog extends ConsumerWidget {
                           color: theme.colorScheme.onSurface,
                         ),
                       ),
+                      if (subtitleText != null && subtitleText.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitleText,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: theme.colorScheme.onSurface.withOpacity(0.65),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),

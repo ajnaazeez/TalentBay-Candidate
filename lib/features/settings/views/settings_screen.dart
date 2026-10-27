@@ -9,6 +9,8 @@ import 'about_us_screen.dart';
 
 import '../../auth/repositories/auth_repository.dart';
 import '../../auth/models/candidate_model.dart';
+import '../../payment/views/subscription_prompt_dialog.dart';
+import '../../../core/theme/app_colors.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -131,6 +133,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ],
                         ),
                       ),
+                      _buildActionTile(
+                        context,
+                        isDark,
+                        title: 'View Subscription Plans',
+                        subtitle: candidate.isTrialActive
+                            ? 'Explore paid plans available after your 7-day trial'
+                            : 'Explore available premium membership plans',
+                        icon: Icons.card_membership_outlined,
+                        iconColor: AppColors.primaryBrand,
+                        onTap: () => SubscriptionPromptDialog.show(context),
+                      ),
                       if (candidate.subscriptionStatus != 'cancelled' &&
                           (candidate.subscriptionExpiryDate == null ||
                               DateTime.now().isBefore(
@@ -147,6 +160,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           onTap: () =>
                               _showCancelSubscriptionDialog(context, candidate),
                         ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                ] else if (candidate != null) ...[
+                  _buildSectionCard(
+                    context,
+                    isDark,
+                    title: 'Membership',
+                    icon: Icons.star_border,
+                    iconColor: AppColors.primaryBrand,
+                    children: [
+                      _buildActionTile(
+                        context,
+                        isDark,
+                        title: candidate.hasUsedTrial
+                            ? 'Upgrade to Premium'
+                            : 'View Subscription Plans',
+                        subtitle: candidate.hasUsedTrial
+                            ? 'Your free trial has expired. Subscribe to keep full access'
+                            : 'Explore premium plans and features',
+                        icon: Icons.card_membership_outlined,
+                        iconColor: AppColors.primaryBrand,
+                        onTap: () => SubscriptionPromptDialog.show(context),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 16),

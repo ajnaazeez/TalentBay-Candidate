@@ -1,10 +1,13 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:talentbay_candidate/core/constants/payment_constants.dart';
 import 'package:talentbay_candidate/core/utils/platform_utils.dart';
 import 'package:talentbay_candidate/features/candidate/controllers/candidate_controller.dart';
 import 'package:talentbay_candidate/features/payment/controllers/subscription_controller.dart';
+import 'subscription_prompt_dialog.dart';
 import '../../../core/theme/app_colors.dart';
 
 class SubscriptionTrialBottomSheet extends ConsumerWidget {
@@ -18,18 +21,24 @@ class SubscriptionTrialBottomSheet extends ConsumerWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    final isTrialActive = user?.isTrialActive ?? false;
+    final isPremium = user?.isPremium ?? false;
     final hasUsedTrial = user?.hasUsedTrial ?? false;
-    final plan = hasUsedTrial 
-        ? PaymentConstants.subscriptionPlans.first
-        : PaymentConstants.trialPlan;
+    final plan = PaymentConstants.subscriptionPlans.first;
 
     // Watch Apple product details on iOS
     final appleProductsAsync = ref.watch(appleProductsProvider);
 
-    final titleText = hasUsedTrial ? 'RENEW SUBSCRIPTION' : 'START 7-DAY TRIAL';
-    final subtitleText = hasUsedTrial
-        ? 'Renew your subscription to keep your Premium access.'
-        : 'Unlock full access to Premium features today.';
+    final titleText = isTrialActive
+        ? '7-DAY FREE TRIAL ACTIVE'
+        : (hasUsedTrial
+            ? 'RENEW SUBSCRIPTION'
+            : 'START 7-DAY FREE TRIAL');
+    final subtitleText = isTrialActive
+        ? 'You have full access to skill assessments, career guidance, and direct recruiter chat.'
+        : (hasUsedTrial
+            ? 'Renew your subscription to keep your Premium access.'
+            : 'Get 7 days of completely free Premium access. No payment details required.');
 
     return Container(
       decoration: BoxDecoration(
@@ -98,35 +107,99 @@ class SubscriptionTrialBottomSheet extends ConsumerWidget {
                   _buildBenefitRow(context, 'Take skill assessments'),
                   const SizedBox(height: 32),
 
-                  // Show ONLY trial plan (or 1 month plan if trial used)
-                  _buildPlanCard(
-                    context,
-                    plan,
-                    isLoading,
-                    Platform.isIOS && plan['id'] == '7_days_trial'
-                        ? '7 Days Free Trial'
-                        : plan['title'],
-                    Platform.isAndroid
-                        ? '₹${plan['displayAmount']}'
-                        : (plan['id'] == '7_days_trial'
-                            ? 'Free'
-                            : appleProductsAsync.when(
-                                data: (products) {
-                                  final match = products.where(
-                                    (p) => p.id == plan['appleProductId'],
-                                  );
-                                  return match.isNotEmpty
-                                      ? match.first.price
-                                      : '₹${plan['displayAmount']}';
-                                },
-                                loading: () => '...',
-                                error: (err, stack) => '₹${plan['displayAmount']}',
-                              )),
-                    () {
-                      Navigator.pop(context);
-                      controller.startSubscription(context, plan);
-                    },
-                  ),
+                  if (isTrialActive) ...[
+                    // Active Free Trial Card
+                    _buildPlanCard(
+                      context,
+                      {
+                        'id': 'free_trial_7d',
+                        'title': '7-Day Free Premium',
+                        'displayAmount': '0',
+                      },
+                      isLoading,
+                      '7-Day Free Trial',
+                      'FREE',
+                      () => Navigator.pop(context),
+                      subtitleText: user?.trialExpiryDate != null
+                          ? 'Active until ${user!.trialExpiryDate!.day}/${user.trialExpiryDate!.month}/${user.trialExpiryDate!.year}'
+                          : 'Full access to all features enabled',
+                      customOfferTag: 'ACTIVE',
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        SubscriptionPromptDialog.show(context);
+                      },
+                      icon: const Icon(Icons.visibility_outlined, size: 16),
+                      label: const Text(
+                        'VIEW ALL SUBSCRIPTION PLANS',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.0,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primaryBrand,
+                        side: const BorderSide(color: AppColors.primaryBrand),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: const RoundedRectangleBorder(),
+                      ),
+                    ),
+                  ] else if (hasUsedTrial && !isPremium) ...[
+                    // Renew Plan Card (1 Month ₹399)
+                    _buildPlanCard(
+                      context,
+                      plan,
+                      isLoading,
+                      plan['title'],
+                      Platform.isAndroid
+                          ? '₹${plan['displayAmount']}'
+                          : appleProductsAsync.when(
+                              data: (products) {
+                                final match = products.where(
+                                  (p) => p.id == plan['appleProductId'],
+                                );
+                                return match.isNotEmpty
+                                    ? match.first.price
+                                    : '₹${plan['displayAmount']}';
+                              },
+                              loading: () => '...',
+                              error: (err, stack) => '₹${plan['displayAmount']}',
+                            ),
+                      () {
+                        Navigator.pop(context);
+                        controller.startSubscription(context, plan);
+                      },
+                    ),
+                  ] else ...[
+                    // First-Time Free Trial Activation Card
+                    _buildPlanCard(
+                      context,
+                      {
+                        'id': 'free_trial_7d',
+                        'title': '7-Day Free Premium',
+                        'displayAmount': '0',
+                      },
+                      isLoading,
+                      'Start 7-Day Free Trial',
+                      '₹0',
+                      () async {
+                        Navigator.pop(context);
+                        // Trigger immediate idempotent trial initialization
+                        try {
+                          await FirebaseFunctions.instanceFor(region: 'us-central1')
+                              .httpsCallable('startCandidateFreeTrial')
+                              .call();
+                        } catch (e) {
+                          debugPrint('[SubscriptionTrialBottomSheet] startCandidateFreeTrial error: $e');
+                        }
+                      },
+                      subtitleText: 'No credit card or payment details required',
+                      customOfferTag: 'FREE',
+                    ),
+                  ],
 
                   const SizedBox(height: 16),
                   
@@ -246,11 +319,13 @@ class SubscriptionTrialBottomSheet extends ConsumerWidget {
     bool isLoading,
     String titleText,
     String priceText,
-    VoidCallback onTap,
-  ) {
+    VoidCallback onTap, {
+    String? subtitleText,
+    String? customOfferTag,
+  }) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final offer = plan['offer'] as String?;
+    final offer = customOfferTag ?? (plan['offer'] as String?);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -273,17 +348,20 @@ class SubscriptionTrialBottomSheet extends ConsumerWidget {
                   children: [
                     Row(
                       children: [
-                        Text(
-                          titleText,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.0,
-                            color: theme.colorScheme.onSurface,
+                        Flexible(
+                          child: Text(
+                            titleText,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                              color: theme.colorScheme.onSurface,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         if (offer != null) ...[
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,
@@ -312,6 +390,17 @@ class SubscriptionTrialBottomSheet extends ConsumerWidget {
                         color: theme.colorScheme.onSurface,
                       ),
                     ),
+                    if (subtitleText != null && subtitleText.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitleText,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: theme.colorScheme.onSurface.withOpacity(0.65),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
