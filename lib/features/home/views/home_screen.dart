@@ -48,6 +48,12 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    debugPrint('[HOME_TRACE] HomeScreen initState executed');
+  }
+
   void _onItemTapped(int index) {
     if (_currentIndex != index) {
       setState(() {
@@ -58,6 +64,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('[HOME_TRACE] HomeScreen build called (currentIndex: $_currentIndex)');
     // Dynamic Theme
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final navBarColor = isDark ? Colors.black : Colors.white;

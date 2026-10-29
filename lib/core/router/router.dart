@@ -45,7 +45,9 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: '/home',
     refreshListenable: refresh,
     redirect: (context, state) {
-      if (ref.read(authNavigationHoldProvider)) {
+      final hold = ref.read(authNavigationHoldProvider);
+      if (hold) {
+        debugPrint('[ROUTER_TRACE] redirect: hold=true, suppressing redirection for ${state.uri.path}');
         return null;
       }
 
@@ -61,13 +63,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isRegistering = state.uri.path == '/register';
       final isTermsAndConditions = state.uri.path == '/terms-and-conditions';
 
-      if (isLoading && currentUser == null) return null;
+      if (isLoading && currentUser == null) {
+        debugPrint('[ROUTER_TRACE] redirect: auth loading and currentUser is null');
+        return null;
+      }
 
       if (isAuthenticated) {
         if (isLoggingIn ||
             isRegistering ||
             isOtpVerification ||
             isTermsAndConditions) {
+          debugPrint('[ROUTER_TRACE] redirect: authenticated on auth screen (${state.uri.path}) -> redirecting to /home');
           return '/home';
         }
       } else {
@@ -75,10 +81,12 @@ final routerProvider = Provider<GoRouter>((ref) {
             !isRegistering &&
             !isOtpVerification &&
             !isTermsAndConditions) {
+          debugPrint('[ROUTER_TRACE] redirect: unauthenticated on protected screen (${state.uri.path}) -> redirecting to /login');
           return '/login';
         }
       }
 
+      debugPrint('[ROUTER_TRACE] redirect: no redirection needed for ${state.uri.path} (authenticated=$isAuthenticated)');
       return null;
     },
     routes: [
@@ -100,9 +108,9 @@ final routerProvider = Provider<GoRouter>((ref) {
           }
           final extra = Map<String, dynamic>.from(extraRaw);
           return OtpVerificationScreen(
-            verificationId: extra['verificationId'],
-            phoneNumber: extra['phoneNumber'],
-            verificationType: extra['verificationType'] ?? 'login',
+            verificationId: (extra['verificationId'] as String?) ?? '',
+            phoneNumber: (extra['phoneNumber'] as String?) ?? '',
+            verificationType: (extra['verificationType'] as String?) ?? 'login',
             registrationData:
                 extra['registrationData'] as Map<String, dynamic>?,
           );

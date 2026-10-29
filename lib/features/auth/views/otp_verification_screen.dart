@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../controllers/auth_controller.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/otp_flow_diagnostics.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import 'dart:async';
@@ -60,6 +61,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
 
   @override
   void dispose() {
+    debugPrint('[OTP_TRACE] OtpVerificationScreen dispose() called');
     _timer?.cancel();
     for (var controller in _controllers) {
       controller.dispose();
@@ -73,12 +75,14 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
   bool _isProcessing = false;
 
   void _verifyOtp() {
+    debugPrint('[OTP_TRACE] _verifyOtp called. type=${widget.verificationType}, isProcessing=$_isProcessing');
     if (_isProcessing) return;
     String otp = _controllers.map((e) => e.text).join();
     if (otp.length == 6) {
       setState(() {
         _isProcessing = true;
       });
+      debugPrint('[OTP_TRACE] 6-digit OTP entered. Dispatching verification...');
       if (widget.verificationType == 'email_register') {
         final regData = widget.registrationData!;
         final email = regData['email'] as String;
@@ -145,20 +149,103 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
           if (mounted) setState(() => _isProcessing = false);
         });
       } else if (widget.verificationType == 'phone_link') {
+        final correlationId = OtpFlowDiagnostics.generateCorrelationId(
+            OtpFlowDiagnostics.flowProfilePhoneUpdate);
+        OtpFlowDiagnostics.log(
+          flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+          correlationId: correlationId,
+          stage: OtpFlowDiagnostics.stageOtpSubmitStarted,
+          status: OtpFlowDiagnostics.statusStarted,
+          details: 'Phone: ${OtpFlowDiagnostics.maskPhone(widget.phoneNumber)}',
+        );
+
+        final trimmedVId = widget.verificationId.trim();
+        final trimmedCode = otp.trim();
+
+        if (trimmedVId.isEmpty || trimmedCode.length != 6) {
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+            correlationId: correlationId,
+            stage: OtpFlowDiagnostics.stageFlowFailed,
+            status: OtpFlowDiagnostics.statusFailure,
+            details:
+                'Validation failed: vIdLength=${trimmedVId.length}, codeLength=${trimmedCode.length}',
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text(
+                    'This verification code has expired. Please request a new one.')),
+          );
+          setState(() => _isProcessing = false);
+          return;
+        }
+
+        OtpFlowDiagnostics.log(
+          flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+          correlationId: correlationId,
+          stage: OtpFlowDiagnostics.stageOtpValidationCompleted,
+          status: OtpFlowDiagnostics.statusSuccess,
+        );
+
         ref
             .read(authControllerProvider.notifier)
-            .verifyUpdatePhoneOtp(context, widget.verificationId, otp)
+            .verifyUpdatePhoneOtp(context, trimmedVId, trimmedCode,
+                correlationId: correlationId)
             .then((saved) {
-              if (!mounted || !saved) return;
-              context.go('/home');
-            }).whenComplete(() {
-              if (mounted) setState(() => _isProcessing = false);
-            });
+          if (!mounted || !saved) return;
+          context.go('/home');
+        }).whenComplete(() {
+          if (mounted) setState(() => _isProcessing = false);
+        });
       } else if (widget.verificationType == 'register') {
+        final correlationId = OtpFlowDiagnostics.generateCorrelationId(
+            OtpFlowDiagnostics.flowAccountCreation);
+        OtpFlowDiagnostics.log(
+          flowId: OtpFlowDiagnostics.flowAccountCreation,
+          correlationId: correlationId,
+          stage: OtpFlowDiagnostics.stageOtpSubmitStarted,
+          status: OtpFlowDiagnostics.statusStarted,
+          details: 'Phone: ${OtpFlowDiagnostics.maskPhone(widget.phoneNumber)}',
+        );
+
+        final trimmedVId = widget.verificationId.trim();
+        final trimmedCode = otp.trim();
+
+        if (trimmedVId.isEmpty || trimmedCode.length != 6) {
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowAccountCreation,
+            correlationId: correlationId,
+            stage: OtpFlowDiagnostics.stageFlowFailed,
+            status: OtpFlowDiagnostics.statusFailure,
+            details:
+                'Validation failed: vIdLength=${trimmedVId.length}, codeLength=${trimmedCode.length}',
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text(
+                    'This verification code has expired. Please request a new one.')),
+          );
+          setState(() => _isProcessing = false);
+          return;
+        }
+
+        OtpFlowDiagnostics.log(
+          flowId: OtpFlowDiagnostics.flowAccountCreation,
+          correlationId: correlationId,
+          stage: OtpFlowDiagnostics.stageOtpValidationCompleted,
+          status: OtpFlowDiagnostics.statusSuccess,
+        );
+
         final regData = widget.registrationData!;
         final credential = PhoneAuthProvider.credential(
-          verificationId: widget.verificationId,
-          smsCode: otp,
+          verificationId: trimmedVId,
+          smsCode: trimmedCode,
+        );
+        OtpFlowDiagnostics.log(
+          flowId: OtpFlowDiagnostics.flowAccountCreation,
+          correlationId: correlationId,
+          stage: OtpFlowDiagnostics.stageFirebaseCredentialCreated,
+          status: OtpFlowDiagnostics.statusSuccess,
         );
 
         ref
@@ -171,16 +258,60 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
               lastName: regData['lastName'],
               phoneNumber: regData['phoneNumber'],
               credential: credential,
-            ).whenComplete(() {
-              if (mounted) setState(() => _isProcessing = false);
-            });
+              correlationId: correlationId,
+            )
+            .whenComplete(() {
+          if (mounted) setState(() => _isProcessing = false);
+        });
       } else {
+        final correlationId = OtpFlowDiagnostics.generateCorrelationId(
+            OtpFlowDiagnostics.flowPhoneSignIn);
+        OtpFlowDiagnostics.log(
+          flowId: OtpFlowDiagnostics.flowPhoneSignIn,
+          correlationId: correlationId,
+          stage: OtpFlowDiagnostics.stageOtpSubmitStarted,
+          status: OtpFlowDiagnostics.statusStarted,
+          details: 'Phone: ${OtpFlowDiagnostics.maskPhone(widget.phoneNumber)}',
+        );
+
+        final trimmedVId = widget.verificationId.trim();
+        final trimmedCode = otp.trim();
+
+        if (trimmedVId.isEmpty || trimmedCode.length != 6) {
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowPhoneSignIn,
+            correlationId: correlationId,
+            stage: OtpFlowDiagnostics.stageFlowFailed,
+            status: OtpFlowDiagnostics.statusFailure,
+            details:
+                'Validation failed: vIdLength=${trimmedVId.length}, codeLength=${trimmedCode.length}',
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text(
+                    'This verification code has expired. Please request a new one.')),
+          );
+          setState(() => _isProcessing = false);
+          return;
+        }
+
+        OtpFlowDiagnostics.log(
+          flowId: OtpFlowDiagnostics.flowPhoneSignIn,
+          correlationId: correlationId,
+          stage: OtpFlowDiagnostics.stageOtpValidationCompleted,
+          status: OtpFlowDiagnostics.statusSuccess,
+        );
+
+        debugPrint('[OTP_TRACE] Dispatching verifyOtp for phone login...');
         ref
             .read(authControllerProvider.notifier)
-            .verifyOtp(context, widget.verificationId, otp)
+            .verifyOtp(context, trimmedVId, trimmedCode,
+                correlationId: correlationId)
             .whenComplete(() {
-              if (mounted) setState(() => _isProcessing = false);
-            });
+          debugPrint(
+              '[OTP_TRACE] verifyOtp future finished. mounted=$mounted');
+          if (mounted) setState(() => _isProcessing = false);
+        });
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(

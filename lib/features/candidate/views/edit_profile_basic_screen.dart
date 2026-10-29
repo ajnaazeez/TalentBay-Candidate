@@ -13,6 +13,7 @@ import 'package:mask_text_input_formatter/mask_text_input_formatter.dart'; // Ad
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/phone_utils.dart';
 import '../../../../core/utils/firebase_error_handler.dart';
+import '../../../../core/utils/otp_flow_diagnostics.dart';
 
 class EditProfileBasicScreen extends ConsumerStatefulWidget {
   const EditProfileBasicScreen({super.key});
@@ -547,14 +548,42 @@ class _EditProfileBasicScreenState
 
   Future<bool> _saveVerifiedPhone(
     PhoneAuthCredential credential,
-    String phoneNumber,
-  ) async {
+    String phoneNumber, {
+    String? correlationId,
+  }) async {
+    final corrId = correlationId ??
+        OtpFlowDiagnostics.generateCorrelationId(
+            OtpFlowDiagnostics.flowProfilePhoneUpdate);
     final authRepo = ref.read(authRepositoryProvider);
     var linkedOnAuth = false;
+    final sw = Stopwatch()..start();
+
     try {
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFirebaseVerificationStarted,
+        status: OtpFlowDiagnostics.statusStarted,
+        details: 'Updating phone number on currentUser',
+      );
       await authRepo.updatePhoneNumber(credential);
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFirebaseVerificationSucceeded,
+        status: OtpFlowDiagnostics.statusSuccess,
+        elapsedMs: sw.elapsedMilliseconds,
+      );
       linkedOnAuth = true;
-    } on FirebaseAuthException catch (e) {
+    } on FirebaseAuthException catch (e, st) {
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFirebaseVerificationStarted,
+        status: OtpFlowDiagnostics.statusFailure,
+        error: e,
+        stackTrace: st,
+      );
       if (e.code == 'provider-already-linked') {
         linkedOnAuth = true;
       } else if (e.code == 'credential-already-in-use' ||
@@ -573,13 +602,28 @@ class _EditProfileBasicScreenState
         _showMessage(FirebaseErrorHandler.getMessage(e), isError: true);
         return false;
       }
-    } catch (e) {
+    } catch (e, st) {
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFlowFailed,
+        status: OtpFlowDiagnostics.statusFailure,
+        error: e,
+        stackTrace: st,
+      );
       _showMessage(FirebaseErrorHandler.getMessage(e), isError: true);
       return false;
     }
 
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFlowFailed,
+        status: OtpFlowDiagnostics.statusFailure,
+        details: 'Session expired before number could be saved',
+      );
       _showMessage(
         'Your session expired before the number could be saved. Please sign in and try again.',
         isError: true,
@@ -592,7 +636,22 @@ class _EditProfileBasicScreenState
         await authRepo.claimVerifiedPhone(phoneNumber);
       }
       await authRepo.syncPhoneToAccount(uid: uid, phoneNumber: phoneNumber);
-    } catch (e) {
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageDatabaseOperationCompleted,
+        status: OtpFlowDiagnostics.statusSuccess,
+        elapsedMs: sw.elapsedMilliseconds,
+      );
+    } catch (e, st) {
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFlowFailed,
+        status: OtpFlowDiagnostics.statusFailure,
+        error: e,
+        stackTrace: st,
+      );
       _showMessage(
         'The code was correct, but the mobile number could not be saved. Please try again.',
         isError: true,
@@ -604,21 +663,63 @@ class _EditProfileBasicScreenState
 
   Future<void> _verifyOtp(String verificationId, String smsCode, String newPhoneNumber) async {
     if (_isVerifyingOtp) return;
-    if (smsCode.length != 6) {
+    final correlationId = OtpFlowDiagnostics.generateCorrelationId(
+        OtpFlowDiagnostics.flowProfilePhoneUpdate);
+    OtpFlowDiagnostics.log(
+      flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+      correlationId: correlationId,
+      stage: OtpFlowDiagnostics.stageOtpSubmitStarted,
+      status: OtpFlowDiagnostics.statusStarted,
+      details: 'Phone: ${OtpFlowDiagnostics.maskPhone(newPhoneNumber)}',
+    );
+
+    final trimmedVId = verificationId.trim();
+    final trimmedCode = smsCode.trim();
+
+    if (trimmedVId.isEmpty || trimmedCode.length != 6) {
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: correlationId,
+        stage: OtpFlowDiagnostics.stageFlowFailed,
+        status: OtpFlowDiagnostics.statusFailure,
+        details:
+            'Validation failed: vIdLength=${trimmedVId.length}, codeLength=${trimmedCode.length}',
+      );
       _showMessage('Enter the 6-digit code sent to your mobile number.', isError: true);
       return;
     }
+
+    OtpFlowDiagnostics.log(
+      flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+      correlationId: correlationId,
+      stage: OtpFlowDiagnostics.stageOtpValidationCompleted,
+      status: OtpFlowDiagnostics.statusSuccess,
+    );
+
     _isVerifyingOtp = true;
     try {
       final credential = PhoneAuthProvider.credential(
-        verificationId: verificationId,
-        smsCode: smsCode,
+        verificationId: trimmedVId,
+        smsCode: trimmedCode,
       );
-      final saved = await _saveVerifiedPhone(credential, newPhoneNumber);
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: correlationId,
+        stage: OtpFlowDiagnostics.stageFirebaseCredentialCreated,
+        status: OtpFlowDiagnostics.statusSuccess,
+      );
+      final saved = await _saveVerifiedPhone(credential, newPhoneNumber,
+          correlationId: correlationId);
       if (saved && mounted) {
         Navigator.pop(context);
         _completePhoneNumber = newPhoneNumber;
         await _updateProfile(newPhoneNumber, phoneJustVerified: true);
+        OtpFlowDiagnostics.log(
+          flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+          correlationId: correlationId,
+          stage: OtpFlowDiagnostics.stageFlowCompleted,
+          status: OtpFlowDiagnostics.statusSuccess,
+        );
       }
     } finally {
       _isVerifyingOtp = false;

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/utils/phone_utils.dart';
 import '../models/candidate_model.dart';
@@ -349,11 +350,18 @@ class AuthRepository {
       // Update phone number on currentUser
       await user.updatePhoneNumber(credential);
 
-      // Reload to ensure token and user state reflect the newly linked phone number
-      await user.reload();
+      // Reload to ensure token and user state reflect the newly linked phone number.
+      // On iOS, the native FLTFirebaseAuthPlugin already executes reload internally;
+      // catch and log transient reload exceptions so phone linking does not fail spuriously.
+      try {
+        await user.reload();
+      } catch (reloadErr) {
+        debugPrint(
+            '[AuthRepository] user.reload notice after updatePhoneNumber: $reloadErr');
+      }
 
       final updatedUser = _auth.currentUser;
-      if (updatedUser == null || updatedUser.uid != initialUid) {
+      if (updatedUser != null && updatedUser.uid != initialUid) {
         throw Exception('Session UID mismatch during phone linking');
       }
     } catch (e) {
