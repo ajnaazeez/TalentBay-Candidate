@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../controllers/auth_controller.dart';
 import '../../../../core/utils/firebase_error_handler.dart';
+import '../../../../core/utils/otp_flow_diagnostics.dart';
 import '../../../../core/utils/phone_utils.dart';
 import '../../../../core/theme/app_colors.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
@@ -42,10 +43,36 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _fullPhoneNumber.isNotEmpty ? _fullPhoneNumber : phoneNumber,
       );
 
+      final corrId = OtpFlowDiagnostics.generateCorrelationId(
+        OtpFlowDiagnostics.flowPhoneSignIn,
+      );
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowPhoneSignIn,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stagePhoneSubmitStarted,
+        status: OtpFlowDiagnostics.statusStarted,
+        details:
+            'Phone submit initiated: ${OtpFlowDiagnostics.maskPhone(formattedPhoneNumber)}',
+      );
+
       if (!PhoneUtils.isValidE164(formattedPhoneNumber)) {
+        OtpFlowDiagnostics.log(
+          flowId: OtpFlowDiagnostics.flowPhoneSignIn,
+          correlationId: corrId,
+          stage: OtpFlowDiagnostics.stagePhoneValidationCompleted,
+          status: OtpFlowDiagnostics.statusFailure,
+          details: 'Invalid E.164 phone format',
+        );
         _showMessage('Please enter a valid mobile number, including the country code.');
         return;
       }
+
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowPhoneSignIn,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stagePhoneValidationCompleted,
+        status: OtpFlowDiagnostics.statusSuccess,
+      );
 
       var loginFinished = false;
       ref
@@ -53,20 +80,31 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           .sendOtp(
             context: context,
             phoneNumber: formattedPhoneNumber,
+            correlationId: corrId,
+            flowId: OtpFlowDiagnostics.flowPhoneSignIn,
             verificationCompleted: (credential) {
               loginFinished = true;
               ref
                   .read(authControllerProvider.notifier)
-                  .completePhoneLogin(context, credential);
+                  .completePhoneLogin(context, credential, correlationId: corrId);
             },
             onCodeSent: (verificationId) {
               if (!mounted || loginFinished) return;
+              OtpFlowDiagnostics.log(
+                flowId: OtpFlowDiagnostics.flowPhoneSignIn,
+                correlationId: corrId,
+                stage: OtpFlowDiagnostics.stageOtpScreenNavigationStarted,
+                status: OtpFlowDiagnostics.statusStarted,
+                details:
+                    'Navigating to /otp-verification with vId=${OtpFlowDiagnostics.maskVerificationId(verificationId)}',
+              );
               context.push(
                 '/otp-verification',
                 extra: {
                   'verificationId': verificationId,
                   'phoneNumber': formattedPhoneNumber,
                   'verificationType': 'login',
+                  'correlationId': corrId,
                 },
               );
             },

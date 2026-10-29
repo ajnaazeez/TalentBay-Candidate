@@ -59,6 +59,32 @@ void main() {
         returnsNormally,
       );
     });
+
+    test('pre-OTP stages are defined and log cleanly', () {
+      final stages = [
+        OtpFlowDiagnostics.stagePhoneSubmitStarted,
+        OtpFlowDiagnostics.stagePhoneValidationCompleted,
+        OtpFlowDiagnostics.stageFirebasePhoneVerifyStarted,
+        OtpFlowDiagnostics.stageFirebaseCodeSent,
+        OtpFlowDiagnostics.stageFirebaseVerificationFailed,
+        OtpFlowDiagnostics.stageFirebaseAutoVerified,
+        OtpFlowDiagnostics.stageFirebaseCodeTimeout,
+        OtpFlowDiagnostics.stageOtpScreenNavigationStarted,
+      ];
+      for (final stage in stages) {
+        expect(stage, isNotEmpty);
+        expect(
+          () => OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowPhoneSignIn,
+            correlationId: 'test_pre_otp_corr',
+            stage: stage,
+            status: OtpFlowDiagnostics.statusInfo,
+            details: 'Stage $stage check',
+          ),
+          returnsNormally,
+        );
+      }
+    });
   });
 
   group('OTP Pre-Credential Guard & Error Handling Tests', () {

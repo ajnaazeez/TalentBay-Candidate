@@ -153,15 +153,60 @@ class AuthController extends AsyncNotifier<void> {
     required String phoneNumber,
     Function(String verificationId)? onCodeSent,
     Function(PhoneAuthCredential credential)? verificationCompleted,
+    String? correlationId,
+    String flowId = OtpFlowDiagnostics.flowPhoneSignIn,
   }) async {
-    if (state.isLoading) return;
+    final corrId = correlationId ??
+        OtpFlowDiagnostics.generateCorrelationId(flowId);
+    final sw = Stopwatch()..start();
+
+    OtpFlowDiagnostics.log(
+      flowId: flowId,
+      correlationId: corrId,
+      stage: OtpFlowDiagnostics.stageFirebasePhoneVerifyStarted,
+      status: OtpFlowDiagnostics.statusStarted,
+      details:
+          'Calling verifyPhoneNumber for ${OtpFlowDiagnostics.maskPhone(phoneNumber)}',
+    );
+
+    if (state.isLoading) {
+      OtpFlowDiagnostics.log(
+        flowId: flowId,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFirebasePhoneVerifyStarted,
+        status: OtpFlowDiagnostics.statusInfo,
+        details: 'sendOtp skipped because state.isLoading is true',
+      );
+      return;
+    }
     state = const AsyncValue.loading();
     try {
       await _authRepository.verifyPhoneNumber(
         phoneNumber: phoneNumber,
-        verificationCompleted: verificationCompleted,
+        verificationCompleted: (credential) {
+          OtpFlowDiagnostics.log(
+            flowId: flowId,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseAutoVerified,
+            status: OtpFlowDiagnostics.statusSuccess,
+            elapsedMs: sw.elapsedMilliseconds,
+            details: 'verificationCompleted callback triggered natively',
+          );
+          if (verificationCompleted != null) {
+            verificationCompleted(credential);
+          }
+        },
         codeSent: (verificationId, forceResendingToken) {
           state = const AsyncValue.data(null);
+          OtpFlowDiagnostics.log(
+            flowId: flowId,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseCodeSent,
+            status: OtpFlowDiagnostics.statusSuccess,
+            elapsedMs: sw.elapsedMilliseconds,
+            details:
+                'vId=${OtpFlowDiagnostics.maskVerificationId(verificationId)}, resendToken=$forceResendingToken',
+          );
           if (onCodeSent != null) {
             onCodeSent(verificationId);
           }
@@ -172,6 +217,15 @@ class AuthController extends AsyncNotifier<void> {
           }
         },
         verificationFailed: (e) {
+          OtpFlowDiagnostics.log(
+            flowId: flowId,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseVerificationFailed,
+            status: OtpFlowDiagnostics.statusFailure,
+            elapsedMs: sw.elapsedMilliseconds,
+            details: 'code=${e.code}, message=${e.message}',
+            error: e,
+          );
           state = AsyncValue.error(e, StackTrace.current);
           if (context.mounted) {
             final message = _getFriendlyPhoneAuthErrorMessage(e);
@@ -180,10 +234,29 @@ class AuthController extends AsyncNotifier<void> {
             );
           }
         },
-        codeAutoRetrievalTimeout: (verificationId) {},
+        codeAutoRetrievalTimeout: (verificationId) {
+          OtpFlowDiagnostics.log(
+            flowId: flowId,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseCodeTimeout,
+            status: OtpFlowDiagnostics.statusInfo,
+            details:
+                'vId=${OtpFlowDiagnostics.maskVerificationId(verificationId)}',
+          );
+        },
       );
     } catch (e, st) {
       debugPrint('[AuthController] sendOtp failed synchronously: $e\n$st');
+      OtpFlowDiagnostics.log(
+        flowId: flowId,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFlowFailed,
+        status: OtpFlowDiagnostics.statusFailure,
+        elapsedMs: sw.elapsedMilliseconds,
+        details: 'sendOtp synchronous exception: $e',
+        error: e,
+        stackTrace: st,
+      );
       state = AsyncValue.error(e, st);
       if (context.mounted) {
         final message = e is FirebaseAuthException
@@ -392,29 +465,55 @@ class AuthController extends AsyncNotifier<void> {
     required BuildContext context,
     required String phoneNumber,
     Function(String verificationId)? onCodeSent,
+    String? correlationId,
   }) async {
+    final corrId = correlationId ??
+        OtpFlowDiagnostics.generateCorrelationId(
+            OtpFlowDiagnostics.flowProfilePhoneUpdate);
+    final sw = Stopwatch()..start();
+
+    OtpFlowDiagnostics.log(
+      flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+      correlationId: corrId,
+      stage: OtpFlowDiagnostics.stageFirebasePhoneVerifyStarted,
+      status: OtpFlowDiagnostics.statusStarted,
+      details:
+          'Calling verifyPhoneNumber for ${OtpFlowDiagnostics.maskPhone(phoneNumber)}',
+    );
+
     if (state.isLoading) return;
-    // Determine the current state value to restore it if needed, or loading
     state = const AsyncValue.loading();
-    // We don't want to reset the entire auth state (logout user) if this fails,
-    // but AsyncNotifier state represents the *operation* state here mainly for UI feedback.
 
     try {
       await _authRepository.verifyPhoneNumber(
         phoneNumber: phoneNumber,
         verificationCompleted: (credential) async {
-          // Auto-resolution on Android devices or instant verification
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseAutoVerified,
+            status: OtpFlowDiagnostics.statusSuccess,
+            elapsedMs: sw.elapsedMilliseconds,
+          );
           await _authRepository.updatePhoneNumber(credential);
           state = const AsyncValue.data(null);
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Phone number updated successfully!')),
             );
-            // Logic to close dialog can be handled in UI listener
           }
         },
         codeSent: (verificationId, forceResendingToken) {
           state = const AsyncValue.data(null);
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseCodeSent,
+            status: OtpFlowDiagnostics.statusSuccess,
+            elapsedMs: sw.elapsedMilliseconds,
+            details:
+                'vId=${OtpFlowDiagnostics.maskVerificationId(verificationId)}, resendToken=$forceResendingToken',
+          );
           if (onCodeSent != null) {
             onCodeSent(verificationId);
           }
@@ -425,6 +524,15 @@ class AuthController extends AsyncNotifier<void> {
           }
         },
         verificationFailed: (e) {
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseVerificationFailed,
+            status: OtpFlowDiagnostics.statusFailure,
+            elapsedMs: sw.elapsedMilliseconds,
+            details: 'code=${e.code}, message=${e.message}',
+            error: e,
+          );
           state = AsyncValue.error(e, StackTrace.current);
           if (context.mounted) {
             final message = _getFriendlyPhoneAuthErrorMessage(e);
@@ -433,10 +541,29 @@ class AuthController extends AsyncNotifier<void> {
             );
           }
         },
-        codeAutoRetrievalTimeout: (verificationId) {},
+        codeAutoRetrievalTimeout: (verificationId) {
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseCodeTimeout,
+            status: OtpFlowDiagnostics.statusInfo,
+            details:
+                'vId=${OtpFlowDiagnostics.maskVerificationId(verificationId)}',
+          );
+        },
       );
     } catch (e, st) {
       debugPrint('[AuthController] sendUpdatePhoneOtp failed synchronously: $e\n$st');
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFlowFailed,
+        status: OtpFlowDiagnostics.statusFailure,
+        elapsedMs: sw.elapsedMilliseconds,
+        details: 'sendUpdatePhoneOtp synchronous exception: $e',
+        error: e,
+        stackTrace: st,
+      );
       state = AsyncValue.error(e, st);
       if (context.mounted) {
         final message = e is FirebaseAuthException
@@ -455,17 +582,48 @@ class AuthController extends AsyncNotifier<void> {
     required String phoneNumber,
     required Function(String verificationId) onCodeSent,
     required Function(PhoneAuthCredential) onAutoVerified,
+    String? correlationId,
   }) async {
+    final corrId = correlationId ??
+        OtpFlowDiagnostics.generateCorrelationId(
+            OtpFlowDiagnostics.flowProfilePhoneUpdate);
+    final sw = Stopwatch()..start();
+
+    OtpFlowDiagnostics.log(
+      flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+      correlationId: corrId,
+      stage: OtpFlowDiagnostics.stageFirebasePhoneVerifyStarted,
+      status: OtpFlowDiagnostics.statusStarted,
+      details:
+          'Calling verifyPhoneNumber for ${OtpFlowDiagnostics.maskPhone(phoneNumber)}',
+    );
+
     if (state.isLoading) return;
     state = const AsyncValue.loading();
     try {
       await _authRepository.verifyPhoneNumber(
         phoneNumber: phoneNumber,
         verificationCompleted: (credential) {
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseAutoVerified,
+            status: OtpFlowDiagnostics.statusSuccess,
+            elapsedMs: sw.elapsedMilliseconds,
+          );
           onAutoVerified(credential);
         },
         codeSent: (verificationId, forceResendingToken) {
           state = const AsyncValue.data(null);
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseCodeSent,
+            status: OtpFlowDiagnostics.statusSuccess,
+            elapsedMs: sw.elapsedMilliseconds,
+            details:
+                'vId=${OtpFlowDiagnostics.maskVerificationId(verificationId)}, resendToken=$forceResendingToken',
+          );
           onCodeSent(verificationId);
           if (context.mounted) {
             ScaffoldMessenger.of(
@@ -474,6 +632,15 @@ class AuthController extends AsyncNotifier<void> {
           }
         },
         verificationFailed: (e) {
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseVerificationFailed,
+            status: OtpFlowDiagnostics.statusFailure,
+            elapsedMs: sw.elapsedMilliseconds,
+            details: 'code=${e.code}, message=${e.message}',
+            error: e,
+          );
           state = AsyncValue.error(e, StackTrace.current);
           if (context.mounted) {
             final message = _getFriendlyPhoneAuthErrorMessage(e);
@@ -482,10 +649,29 @@ class AuthController extends AsyncNotifier<void> {
             );
           }
         },
-        codeAutoRetrievalTimeout: (verificationId) {},
+        codeAutoRetrievalTimeout: (verificationId) {
+          OtpFlowDiagnostics.log(
+            flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+            correlationId: corrId,
+            stage: OtpFlowDiagnostics.stageFirebaseCodeTimeout,
+            status: OtpFlowDiagnostics.statusInfo,
+            details:
+                'vId=${OtpFlowDiagnostics.maskVerificationId(verificationId)}',
+          );
+        },
       );
     } catch (e, st) {
       debugPrint('[AuthController] sendUpdatePhoneOtpWithCallback failed synchronously: $e\n$st');
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stageFlowFailed,
+        status: OtpFlowDiagnostics.statusFailure,
+        elapsedMs: sw.elapsedMilliseconds,
+        details: 'sendUpdatePhoneOtpWithCallback synchronous exception: $e',
+        error: e,
+        stackTrace: st,
+      );
       state = AsyncValue.error(e, st);
       if (context.mounted) {
         final message = e is FirebaseAuthException

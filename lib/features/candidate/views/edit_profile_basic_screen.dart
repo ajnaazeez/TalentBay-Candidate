@@ -404,7 +404,26 @@ class _EditProfileBasicScreenState
       return;
     }
 
+    final corrId = OtpFlowDiagnostics.generateCorrelationId(
+      OtpFlowDiagnostics.flowProfilePhoneUpdate,
+    );
+    OtpFlowDiagnostics.log(
+      flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+      correlationId: corrId,
+      stage: OtpFlowDiagnostics.stagePhoneSubmitStarted,
+      status: OtpFlowDiagnostics.statusStarted,
+      details:
+          'Profile phone update initiated: ${OtpFlowDiagnostics.maskPhone(formattedPhoneNumber)}',
+    );
+
     if (!PhoneUtils.isValidE164(formattedPhoneNumber)) {
+      OtpFlowDiagnostics.log(
+        flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+        correlationId: corrId,
+        stage: OtpFlowDiagnostics.stagePhoneValidationCompleted,
+        status: OtpFlowDiagnostics.statusFailure,
+        details: 'Invalid E.164 phone format',
+      );
       _showMessage(
         'Please enter a valid mobile number. It is mandatory for your account.',
         isError: true,
@@ -412,15 +431,24 @@ class _EditProfileBasicScreenState
       return;
     }
 
+    OtpFlowDiagnostics.log(
+      flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
+      correlationId: corrId,
+      stage: OtpFlowDiagnostics.stagePhoneValidationCompleted,
+      status: OtpFlowDiagnostics.statusSuccess,
+    );
+
     final authController = ref.read(authControllerProvider.notifier);
 
     // Send OTP using callback
     await authController.sendUpdatePhoneOtpWithCallback(
       context: context,
       phoneNumber: formattedPhoneNumber,
+      correlationId: corrId,
       onCodeSent: (verificationId) {
         if (mounted) {
-          _showOtpDialog(verificationId, formattedPhoneNumber);
+          _showOtpDialog(verificationId, formattedPhoneNumber,
+              correlationId: corrId);
         }
       },
       onAutoVerified: (credential) async {
@@ -428,7 +456,8 @@ class _EditProfileBasicScreenState
         if (_isVerifyingOtp) return;
         _isVerifyingOtp = true;
         try {
-          final saved = await _saveVerifiedPhone(credential, formattedPhoneNumber);
+          final saved = await _saveVerifiedPhone(credential, formattedPhoneNumber,
+              correlationId: corrId);
           if (saved && mounted) {
             _completePhoneNumber = formattedPhoneNumber;
             await _updateProfile(formattedPhoneNumber, phoneJustVerified: true);
@@ -442,7 +471,8 @@ class _EditProfileBasicScreenState
     );
   }
 
-  void _showOtpDialog(String verificationId, String newPhoneNumber) {
+  void _showOtpDialog(String verificationId, String newPhoneNumber,
+      {String? correlationId}) {
     final otpController = TextEditingController();
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -529,7 +559,8 @@ class _EditProfileBasicScreenState
               if (_isVerifyingOtp) return;
               final smsCode = otpController.text.trim();
               if (smsCode.length == 6) {
-                await _verifyOtp(verificationId, smsCode, newPhoneNumber);
+                await _verifyOtp(verificationId, smsCode, newPhoneNumber,
+                    correlationId: correlationId);
               }
             },
             style: ElevatedButton.styleFrom(
@@ -661,13 +692,16 @@ class _EditProfileBasicScreenState
     return true;
   }
 
-  Future<void> _verifyOtp(String verificationId, String smsCode, String newPhoneNumber) async {
+  Future<void> _verifyOtp(
+      String verificationId, String smsCode, String newPhoneNumber,
+      {String? correlationId}) async {
     if (_isVerifyingOtp) return;
-    final correlationId = OtpFlowDiagnostics.generateCorrelationId(
-        OtpFlowDiagnostics.flowProfilePhoneUpdate);
+    final activeCorrelationId = correlationId ??
+        OtpFlowDiagnostics.generateCorrelationId(
+            OtpFlowDiagnostics.flowProfilePhoneUpdate);
     OtpFlowDiagnostics.log(
       flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
-      correlationId: correlationId,
+      correlationId: activeCorrelationId,
       stage: OtpFlowDiagnostics.stageOtpSubmitStarted,
       status: OtpFlowDiagnostics.statusStarted,
       details: 'Phone: ${OtpFlowDiagnostics.maskPhone(newPhoneNumber)}',
@@ -679,7 +713,7 @@ class _EditProfileBasicScreenState
     if (trimmedVId.isEmpty || trimmedCode.length != 6) {
       OtpFlowDiagnostics.log(
         flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
-        correlationId: correlationId,
+        correlationId: activeCorrelationId,
         stage: OtpFlowDiagnostics.stageFlowFailed,
         status: OtpFlowDiagnostics.statusFailure,
         details:
@@ -691,7 +725,7 @@ class _EditProfileBasicScreenState
 
     OtpFlowDiagnostics.log(
       flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
-      correlationId: correlationId,
+      correlationId: activeCorrelationId,
       stage: OtpFlowDiagnostics.stageOtpValidationCompleted,
       status: OtpFlowDiagnostics.statusSuccess,
     );
@@ -704,19 +738,19 @@ class _EditProfileBasicScreenState
       );
       OtpFlowDiagnostics.log(
         flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
-        correlationId: correlationId,
+        correlationId: activeCorrelationId,
         stage: OtpFlowDiagnostics.stageFirebaseCredentialCreated,
         status: OtpFlowDiagnostics.statusSuccess,
       );
       final saved = await _saveVerifiedPhone(credential, newPhoneNumber,
-          correlationId: correlationId);
+          correlationId: activeCorrelationId);
       if (saved && mounted) {
         Navigator.pop(context);
         _completePhoneNumber = newPhoneNumber;
         await _updateProfile(newPhoneNumber, phoneJustVerified: true);
         OtpFlowDiagnostics.log(
           flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
-          correlationId: correlationId,
+          correlationId: activeCorrelationId,
           stage: OtpFlowDiagnostics.stageFlowCompleted,
           status: OtpFlowDiagnostics.statusSuccess,
         );

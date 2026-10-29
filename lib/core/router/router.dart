@@ -111,6 +111,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             verificationId: (extra['verificationId'] as String?) ?? '',
             phoneNumber: (extra['phoneNumber'] as String?) ?? '',
             verificationType: (extra['verificationType'] as String?) ?? 'login',
+            correlationId: extra['correlationId'] as String?,
             registrationData:
                 extra['registrationData'] as Map<String, dynamic>?,
           );

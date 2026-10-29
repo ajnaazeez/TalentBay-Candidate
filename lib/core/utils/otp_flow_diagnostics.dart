@@ -9,6 +9,14 @@ class OtpFlowDiagnostics {
   static const String flowProfilePhoneUpdate = 'profile_phone_update';
 
   // Standardized Stage Identifiers
+  static const String stagePhoneSubmitStarted = 'PHONE_SUBMIT_STARTED';
+  static const String stagePhoneValidationCompleted = 'PHONE_VALIDATION_COMPLETED';
+  static const String stageFirebasePhoneVerifyStarted = 'FIREBASE_PHONE_VERIFY_STARTED';
+  static const String stageFirebaseCodeSent = 'FIREBASE_CODE_SENT';
+  static const String stageFirebaseVerificationFailed = 'FIREBASE_VERIFICATION_FAILED';
+  static const String stageFirebaseAutoVerified = 'FIREBASE_AUTO_VERIFIED';
+  static const String stageFirebaseCodeTimeout = 'FIREBASE_CODE_TIMEOUT';
+  static const String stageOtpScreenNavigationStarted = 'OTP_SCREEN_NAVIGATION_STARTED';
   static const String stageOtpSubmitStarted = 'OTP_SUBMIT_STARTED';
   static const String stageOtpValidationCompleted = 'OTP_VALIDATION_COMPLETED';
   static const String stageFirebaseCredentialCreated = 'FIREBASE_CREDENTIAL_CREATED';

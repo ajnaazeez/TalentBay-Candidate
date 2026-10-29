@@ -12,6 +12,7 @@ class OtpVerificationScreen extends ConsumerStatefulWidget {
   final String verificationId;
   final String phoneNumber;
   final String verificationType; // 'login' or 'phone_link' or 'register'
+  final String? correlationId;
   final Map<String, dynamic>? registrationData;
 
   const OtpVerificationScreen({
@@ -19,6 +20,7 @@ class OtpVerificationScreen extends ConsumerStatefulWidget {
     required this.verificationId,
     required this.phoneNumber,
     this.verificationType = 'login',
+    this.correlationId,
     this.registrationData,
   });
 
@@ -97,17 +99,39 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
               final formattedPhone = phoneNumber.startsWith('+')
                   ? phoneNumber
                   : '+91$phoneNumber';
+              final regCorrId = OtpFlowDiagnostics.generateCorrelationId(
+                OtpFlowDiagnostics.flowAccountCreation,
+              );
+              OtpFlowDiagnostics.log(
+                flowId: OtpFlowDiagnostics.flowAccountCreation,
+                correlationId: regCorrId,
+                stage: OtpFlowDiagnostics.stagePhoneSubmitStarted,
+                status: OtpFlowDiagnostics.statusStarted,
+                details:
+                    'Account creation phone OTP initiated: ${OtpFlowDiagnostics.maskPhone(formattedPhone)}',
+              );
               ref.read(authControllerProvider.notifier).sendOtp(
                 context: context,
                 phoneNumber: formattedPhone,
+                correlationId: regCorrId,
+                flowId: OtpFlowDiagnostics.flowAccountCreation,
                 onCodeSent: (vId) {
                   if (mounted) {
+                    OtpFlowDiagnostics.log(
+                      flowId: OtpFlowDiagnostics.flowAccountCreation,
+                      correlationId: regCorrId,
+                      stage: OtpFlowDiagnostics.stageOtpScreenNavigationStarted,
+                      status: OtpFlowDiagnostics.statusStarted,
+                      details:
+                          'Navigating to phone OTP stage with vId=${OtpFlowDiagnostics.maskVerificationId(vId)}',
+                    );
                     context.pushReplacement(
                       '/otp-verification',
                       extra: {
                         'verificationId': vId,
                         'phoneNumber': phoneNumber,
                         'verificationType': 'register',
+                        'correlationId': regCorrId,
                         'registrationData': regData,
                       },
                     );
@@ -124,6 +148,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                     lastName: regData['lastName'],
                     phoneNumber: phoneNumber,
                     credential: credential,
+                    correlationId: regCorrId,
                   ).whenComplete(() {
                     if (mounted) setState(() => _isProcessing = false);
                   });
@@ -149,8 +174,9 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
           if (mounted) setState(() => _isProcessing = false);
         });
       } else if (widget.verificationType == 'phone_link') {
-        final correlationId = OtpFlowDiagnostics.generateCorrelationId(
-            OtpFlowDiagnostics.flowProfilePhoneUpdate);
+        final correlationId = widget.correlationId ??
+            OtpFlowDiagnostics.generateCorrelationId(
+                OtpFlowDiagnostics.flowProfilePhoneUpdate);
         OtpFlowDiagnostics.log(
           flowId: OtpFlowDiagnostics.flowProfilePhoneUpdate,
           correlationId: correlationId,
@@ -198,8 +224,9 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
           if (mounted) setState(() => _isProcessing = false);
         });
       } else if (widget.verificationType == 'register') {
-        final correlationId = OtpFlowDiagnostics.generateCorrelationId(
-            OtpFlowDiagnostics.flowAccountCreation);
+        final correlationId = widget.correlationId ??
+            OtpFlowDiagnostics.generateCorrelationId(
+                OtpFlowDiagnostics.flowAccountCreation);
         OtpFlowDiagnostics.log(
           flowId: OtpFlowDiagnostics.flowAccountCreation,
           correlationId: correlationId,
@@ -264,8 +291,9 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
           if (mounted) setState(() => _isProcessing = false);
         });
       } else {
-        final correlationId = OtpFlowDiagnostics.generateCorrelationId(
-            OtpFlowDiagnostics.flowPhoneSignIn);
+        final correlationId = widget.correlationId ??
+            OtpFlowDiagnostics.generateCorrelationId(
+                OtpFlowDiagnostics.flowPhoneSignIn);
         OtpFlowDiagnostics.log(
           flowId: OtpFlowDiagnostics.flowPhoneSignIn,
           correlationId: correlationId,

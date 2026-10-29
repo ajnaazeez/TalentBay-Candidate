@@ -376,16 +376,34 @@ class AuthRepository {
     required Function(String) codeAutoRetrievalTimeout,
     Function(PhoneAuthCredential)? verificationCompleted,
   }) async {
+    final masked =
+        PhoneUtils.lastTenDigits(PhoneUtils.normalizeE164(phoneNumber));
+    debugPrint(
+        '[AuthRepository] Calling _auth.verifyPhoneNumber for digits ending $masked');
     await _auth.verifyPhoneNumber(
       phoneNumber: phoneNumber,
       verificationCompleted: (PhoneAuthCredential credential) async {
+        debugPrint(
+            '[AuthRepository] verifyPhoneNumber.verificationCompleted triggered');
         if (verificationCompleted != null) {
           verificationCompleted(credential);
         }
       },
-      verificationFailed: verificationFailed,
-      codeSent: codeSent,
-      codeAutoRetrievalTimeout: codeAutoRetrievalTimeout,
+      verificationFailed: (FirebaseAuthException e) {
+        debugPrint(
+            '[AuthRepository] verifyPhoneNumber.verificationFailed: [${e.code}] ${e.message}');
+        verificationFailed(e);
+      },
+      codeSent: (verificationId, forceResendingToken) {
+        debugPrint(
+            '[AuthRepository] verifyPhoneNumber.codeSent triggered: token=$forceResendingToken');
+        codeSent(verificationId, forceResendingToken);
+      },
+      codeAutoRetrievalTimeout: (verificationId) {
+        debugPrint(
+            '[AuthRepository] verifyPhoneNumber.codeAutoRetrievalTimeout triggered');
+        codeAutoRetrievalTimeout(verificationId);
+      },
     );
   }
 
